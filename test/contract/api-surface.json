@@ -1,0 +1,57 @@
+{
+  "apiVersion": 1,
+  "stateVersion": 9,
+  "schemaVersion": 1,
+  "stateKeys": [
+    "apiVersion",
+    "backups",
+    "bots",
+    "clientContract",
+    "config",
+    "contract",
+    "discovered",
+    "discoveredAt",
+    "drift",
+    "history",
+    "hostEnv",
+    "lastError",
+    "listeners",
+    "metrics",
+    "metricsTotals",
+    "patches",
+    "paused",
+    "profileDir",
+    "profileOk",
+    "routes",
+    "schemaErrors",
+    "schemaOk",
+    "schemaVersion",
+    "status",
+    "tuning",
+    "warnings"
+  ],
+  "errorCodes": {
+    "unknown_op": 404,
+    "invalid_action": 400,
+    "unknown_patch": 404,
+    "provider_not_found": 400,
+    "private_target": 400
+  },
+  "client": {
+    "loader": "window.__ModuleLoader__.load",
+    "slot": "settings.plugins.tab",
+    "exports": [
+      ".",
+      "./client",
+      "./package.json"
+    ],
+    "dshClient": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    "label": "出口路由"
+  }
+}

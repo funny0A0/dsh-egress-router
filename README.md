@@ -177,6 +177,7 @@ Invoke-RestMethod "http://127.0.0.1:8792/__health"
 | `bots{}` | 机器人 → 代理映射（启动时注入进程环境变量） |
 | `history[]` | 审计流水（最多 50 条，重复行 60s 内折叠） |
 | `hostContract` / `hostEnv` | 宿主接受的注册形状与当时的平台/Node 版本 |
+| `schemaVersion` | 状态文档的对外形状版本（当前 1），由 `lib/schema.js` 校验；`?op=state` 的 `schemaOk` 为 false 时页面会显示具体字段 |
 | `reconcilePaused{}` | 漂移自愈的暂停窗口（原因 + 到期时间） |
 
 ### 机器人代理与环境变量
@@ -208,7 +209,7 @@ export DSH_TELEGRAM_PROXY=http://127.0.0.1:7897
 
 | op | 方法 | 说明 |
 | --- | --- | --- |
-| `state` | GET | 页面所需的全部状态（24 个键，含 `apiVersion: 1`，见 `test/api-surface.test.mjs`） |
+| `state` | GET | 页面所需的全部状态（26 个键，含 `apiVersion: 1` 与 `schemaOk` / `schemaErrors`；键集合锁定在 `test/contract/api-surface.json`） |
 | `diagnose` | GET | 脱敏现场包（代理 userinfo、机器人地址、备份路径都已处理） |
 | `upstream` | POST | 逐路由探一次上游链路（用该路由自己的代理，6s 超时） |
 | `discover` | GET | 重新扫描目标并缓存 |
@@ -248,12 +249,13 @@ export DSH_TELEGRAM_PROXY=http://127.0.0.1:7897
 
 | 宿主 | 平台 | 状态 |
 | --- | --- | --- |
-| DSH 桌面版 `0.2.1-rc.2` | Windows 11（Node 24） | **实测通过**（本机） |
-| DSH 桌面版 `0.2.0-rc.2` | Windows / Linux | 未实测（契约探测会尝试三种形状） |
-| 其它 `0.2.x` | Windows / Linux | 未实测；失败时显式降级 |
+| DSH 桌面版 `0.2.1-rc.2` | Windows 11（Node 24.15） | **真机实测通过** |
+| DSH 桌面版 `0.2.1-rc.2` | Linux / macOS（Node 20、24） | CI 覆盖：测试 + 打包门禁 + **安装冒烟**；未做真机桌面联调 |
+| DSH 桌面版 `0.2.0-rc.2` | 三平台 | 未实测（契约探测会尝试三种形状） |
+| 其它 `0.2.x` | 三平台 | 未实测；失败时显式降级 |
 
-Linux 侧的 CI 覆盖见 `.github/workflows/ci.yml`（Windows/Linux × Node 20/24：语法检查、测试、打包门禁）。
-细节与升级检查清单：[docs/compatibility.md](docs/compatibility.md)。
+CI 矩阵与真机记录见 [docs/compatibility.md](docs/compatibility.md)；发布步骤与回滚演练见 [docs/RELEASE.md](docs/RELEASE.md)。
+三平台兼容的差异点（安装布局、文件名、换行、`npm` 形态）都有测试或安装冒烟固定。
 
 ## 安全边界
 
@@ -274,22 +276,23 @@ Linux 侧的 CI 覆盖见 `.github/workflows/ci.yml`（Windows/Linux × Node 20/
 ## 开发
 
 ```bash
-npm test               # 105 条测试（自带 runner：node --test 在沙箱内 worker 会 EPERM）
+npm test               # 82 条测试 / 18 套件（自带 runner：node --test 在沙箱内 worker 会 EPERM）
 npm run check          # 所有模块 node --check
 npm run check:package  # 打包门禁：必备/禁入文件、体积
+npm run install-smoke  # 打包 → 干净 consumer 安装 → 启动已安装副本 → 校验契约
 npm run version        # 校验版本号在 README 与 CHANGELOG 都有记录
 ```
 
 目录：
 
 ```
-lib/            插件后端（入口、manager、relay、discovery、patcher、routes、store、bots、patches、reconcile、probe、ports）
+lib/            插件后端（入口、manager、relay、discovery、patcher、routes、store、bots、patches、reconcile、probe、ports、schema）
 client/         设置页 bundle（无构建，纯 ESM + h()）
 patches/        声明式兼容补丁定义
-docs/           安装、兼容矩阵、回滚
+docs/           安装、兼容矩阵、回滚、发布清单
 preview/        离线渲染 harness 与明暗截图
-test/           14 个套件，105 条用例
-scripts/        发布门禁
+test/           18 个套件，82 条用例（含契约快照 test/contract/）
+scripts/        发布门禁与安装冒烟
 ```
 
 ## 版本历史
@@ -322,6 +325,7 @@ scripts/        发布门禁
 | 0.7.3 | 修 profile 目录识别：扫描不再永远为空、补丁状态不再误报未安装，`state` 增加 `profileOk` |
 | 0.8.0 | 可靠性：监听自愈（指数退避）、失败统一落盘 `lastError`、刷新序号/取消/去抖、写操作互斥与无障碍标注、熔断改十分钟滑窗并逐级延长 |
 | 0.9.0 | 可观测：指标跨重启累计（`state` v9）、脱敏诊断包、`config.targets` 自定义端点、上游健康体检、`apiVersion` |
+| 0.9.1 | 发布工程：状态 schema 校验（`schemaOk`/`schemaErrors`）、API 与客户端契约快照、三平台 CI 安装冒烟、发布清单 |
 
 完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 

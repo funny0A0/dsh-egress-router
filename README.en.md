@@ -92,7 +92,7 @@ Routes live in `$DSH_HOME/storages/egress-router/state.json` (`version: 9`,
 
 | op | method | purpose |
 | --- | --- | --- |
-| `state` | GET | everything the page needs (24 keys, `apiVersion: 1`, locked by `test/api-surface.test.mjs`) |
+| `state` | GET | everything the page needs (26 keys, `apiVersion: 1`, `schemaOk` / `schemaErrors`; the key set is locked by `test/contract/api-surface.json`) |
 | `diagnose` | GET | redacted snapshot for bug reports (proxy userinfo, bot URLs and backup paths are stripped) |
 | `upstream` | POST | per-route TLS reachability through that route's own proxy (6s) |
 | `discover` | GET | rescan targets |
@@ -130,13 +130,16 @@ Write operations require `POST` with `content-type: application/json`. Common er
 
 | Host | Platform | Status |
 | --- | --- | --- |
-| DSH desktop `0.2.1-rc.2` | Windows 11 (Node 24) | **tested** |
-| DSH desktop `0.2.0-rc.2` | Windows / Linux | not tested (the probe tries three shapes) |
-| other `0.2.x` | Windows / Linux | not tested; degrades explicitly |
+| DSH desktop `0.2.1-rc.2` | Windows 11 (Node 24.15) | **verified on a real machine** |
+| DSH desktop `0.2.1-rc.2` | Linux / macOS (Node 20, 24) | CI only: tests + package gate + install smoke; no desktop session was driven |
+| DSH desktop `0.2.0-rc.2` | all three | not tested (the probe tries three shapes) |
+| other `0.2.x` | all three | not tested; degrades explicitly |
 
-Linux is covered in CI (`.github/workflows/ci.yml`: Windows/Linux x Node 20/24 - syntax check,
-tests, package gate). See [docs/compatibility.md](docs/compatibility.md) for the matrix and the
-upgrade checklist, and [docs/rollback.md](docs/rollback.md) for going back a version.
+CI runs three operating systems x two Node versions (`.github/workflows/ci.yml`). The install smoke
+job packs the tarball, installs it into a clean consumer profile and boots the installed copy, which
+is the only check that covers packaging mistakes.
+See [docs/compatibility.md](docs/compatibility.md) for the matrix, [docs/RELEASE.md](docs/RELEASE.md)
+for the release checklist, and [docs/rollback.md](docs/rollback.md) for going back a version.
 
 ## Safety
 
@@ -161,9 +164,10 @@ upgrade checklist, and [docs/rollback.md](docs/rollback.md) for going back a ver
 ## Development
 
 ```bash
-npm test               # 105 tests (custom runner: node --test workers hit EPERM in the sandbox)
+npm test               # 82 tests / 18 suites (custom runner: node --test workers hit EPERM in the sandbox)
 npm run check          # node --check every module
 npm run check:package  # package gate: required/forbidden files, size
+npm run install-smoke  # pack -> clean consumer install -> boot the installed copy -> contract check
 npm run version        # version documented in README and CHANGELOG
 ```
 

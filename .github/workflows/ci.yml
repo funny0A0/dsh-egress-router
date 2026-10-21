@@ -7,10 +7,11 @@ on:
 
 jobs:
   test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         node: [20, 24]
     runs-on: ${{ matrix.os }}
     steps:
@@ -22,3 +23,23 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run check:package
+
+  # The test job runs the source tree. This job runs the *tarball*: pack, install into a clean
+  # consumer profile, boot the installed copy with a fake host and assert the outward contract.
+  # It is the only check that covers packaging mistakes (missing exports["./client"], files
+  # omitted by the `files` allow-list, a profile root resolved one directory too low).
+  install-smoke:
+    name: install smoke (${{ matrix.os }}, node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [20, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm install --no-audit --no-fund
+      - run: npm run install-smoke

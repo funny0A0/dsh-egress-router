@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.1
+
+发布工程版本：不改用户可见的转发行为，只把「装上去能不能用」变成可重复的检查。
+
+### 状态 schema 校验（`lib/schema.js`）
+
+- 按 state v9 定义校验整个文档：顶层 18 个键必须存在，`routes[]` 的 `id` / `target(host:port)` / `listenPort`、`listeners[]` 的 `ok`、指标计数非负、`lastError` 形状、`hostContract`/`hostEnv` 可空等。
+- `?op=state` 新增 `schemaOk` 与 `schemaErrors`（逐字段 `path / expected / actual`，最多 50 条）。**只报告不修复**：自动改写用户数据正是这次要暴露的失败模式。
+- 校验器无依赖、可单测：`test/contract.test.mjs` 用真实状态断言通过，并断言坏行（`listenPort: 0`）会失败。
+
+### API 与客户端契约快照（`test/contract/api-surface.json`）
+
+- 快照锁定：`apiVersion`、`state` 的 26 个键、五个错误码的状态（`unknown_op` 404、`invalid_action` 400、`unknown_patch` 404、`provider_not_found` 400、`private_target` 400）、客户端 loader `window.__ModuleLoader__.load`、槽位 `settings.plugins.tab`、`exports`（`.` / `./client` / `./package.json`）与 `dsh.client`（platform/immediately/inject）。
+- 宿主改名一个槽位、我们少一个 export，这个测试先红，而不是用户在设置页看到空面板。原 `test/api-surface.test.mjs` 已并入此测试，避免两处维护。
+
+### 三平台安装冒烟（`scripts/install-smoke.mjs`）
+
+- `npm run install-smoke`：`npm pack` → 建一个只有本包依赖的干净 consumer → `npm install` → 用假 `ctx` 启动**已安装副本** → 断言 `apiVersion`、键集合、`schemaOk`、`profileOk`、发现器读到 profile、`client/client.js` 与 `cordis.patch.yml` 确实在包里。
+- 这是唯一覆盖「包内容」的检查：`exports["./client"]` 缺失、`files` 漏文件、profileRoot 少上溯一层，都会在这里失败。
+- Windows 上 `execFileSync('npm.cmd')` 会 `EINVAL`，改为优先 `node <npm-cli.js>`，找不到才退回 `npm` + shell。
+
+### CI 与文档
+
+- CI 矩阵扩到 `ubuntu-latest` / `windows-latest` / `macos-latest` × Node 20/24，新增 `install-smoke` 作业（同矩阵）。
+- 新增 `docs/RELEASE.md`：版本号单一来源、四项本地门禁、产物内容核对、三平台真机验收 7 条、提交打标、npm 发布与市场收录、回滚演练、发布后 24 小时清单、三平台差异速查。
+- `docs/compatibility.md` 重写：宿主 × 平台矩阵（Windows 真机、Linux/macOS 仅 CI）、CI 作业表、四处平台差异与对应测试、契约清单指向快照测试、实测记录表。
+- 测试 82 条 / 18 套件；`check` 24 文件 0 失败；产物 25 文件（含 docs/RELEASE.md）。
+
 ## 0.9.0
 
 这一版解决三个「看不见」：重启就归零的流量、只能远程排查的现场、以及代理挂掉时要等应用失败才发现的上游。

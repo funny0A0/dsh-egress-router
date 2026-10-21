@@ -15,6 +15,8 @@ const REQUIRED = [
   'CHANGELOG.md',
   'LICENSE',
   'docs/compatibility.md',
+  'docs/install.md',
+  'docs/RELEASE.md',
   'docs/rollback.md',
 ]
 const FORBIDDEN = [/^test\//, /^preview\//, /\.tgz$/, /^REVIEW-/, /^PROMPT-/, /^node_modules\//, /\.bak$/, /^\.git\//]
