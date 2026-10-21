@@ -59,20 +59,21 @@ function makeHome() {
   return { home, stateDir: path.join(home, 'storages', 'egress-router') }
 }
 
-await check('the bot proxy is written into $DSH_HOME/.env and removed on clear', async () => {
+await check('the bot proxy stays in-process and never touches $DSH_HOME/.env', async () => {
+  delete process.env[ENV]
   const { profileDir } = makeProfile()
   const { home, stateDir } = makeHome()
+  const envFile = path.join(home, '.env')
+  const original = 'NO_PROXY=localhost\n'
+  fs.writeFileSync(envFile, original)
   const result = applyBotProxy({ id: 'telegram', proxyName: 'clash', proxies: PROXIES, profileDir, stateDir })
   assert.equal(result.bot.url, 'http://127.0.0.1:7897')
-  const env = fs.readFileSync(path.join(home, '.env'), 'utf8')
-  assert.match(env, /# dsh-egress-router \(managed\)/)
-  assert.match(env, new RegExp('^' + ENV + '=http://127\\.0\\.0\\.1:7897$', 'm'))
-
+  assert.equal(result.persisted, 'process')
+  assert.equal(fs.readFileSync(envFile, 'utf8'), original, 'the launcher rejects this name in .env')
+  assert.equal(process.env[ENV], 'http://127.0.0.1:7897')
   clearBotProxy({ id: 'telegram' })
-  const after = fs.existsSync(path.join(home, '.env')) ? fs.readFileSync(path.join(home, '.env'), 'utf8') : ''
-  assert.equal(after.includes(ENV), false)
-  assert.equal(after.includes('dsh-egress-router (managed)'), false)
   assert.equal(process.env[ENV], undefined)
+  assert.equal(fs.readFileSync(envFile, 'utf8'), original)
 })
 
 await check('a reconcile pause is persisted and reported, and reset clears it', async () => {

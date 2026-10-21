@@ -40,7 +40,8 @@ working only because `api.deepseek.com` is exempt.
   reachable; no more "looks applied, does not work".
 - **Metrics** - requests, bytes in/out, failures, status codes, TTFB p50/p95 per route.
 - **Bot egress** - for plugins that hard-code their endpoint (Telegram): a declarative
-  patch plus `DSH_TELEGRAM_PROXY`, persisted into `$DSH_HOME/.env`.
+  patch plus `DSH_TELEGRAM_PROXY`, injected into the host process. It must **not** live in
+  `$DSH_HOME/.env`: the launcher refuses to start when that name appears there.
 - **Declarative compatibility patches** - unique-anchor patches, re-applied at boot after a
   reinstall wipes them.
 - **Drift repair with a circuit breaker** - keeps `baseURL` and listeners in sync, pauses
@@ -101,7 +102,7 @@ Routes live in `$DSH_HOME/storages/egress-router/state.json` (`version: 8`,
 | `rollback` | POST | undo by item or the last change |
 | `test` | POST | one real request through the relay |
 | `patches` / `patch` | GET / POST | compatibility patches: list / apply / revert / verify |
-| `bot` | POST | set a bot's proxy (managed `.env` block) |
+| `bot` | POST | set a bot's proxy (injected into the process environment) |
 | `reconcile` | POST | repair config drift, or resume checking |
 
 Write operations require `POST` with `content-type: application/json`. Common errors:

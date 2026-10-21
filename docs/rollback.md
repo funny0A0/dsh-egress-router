@@ -34,15 +34,11 @@ pnpm add "file:F:/projects_all/AI_projects/dsh-egress-router/dsh-egress-router-0
 
 ## 恢复机器人代理
 
-`.env` 里我们只写托管块：
+0.7.2 起代理不再写 `.env`（启动器拒绝该变量，会导致 DSH 无法启动），只记录在
+`storages\egress-router\state.json` 的 `bots` 里并在启动时注入本进程。
 
-```
-# dsh-egress-router (managed) — bot egress
-DSH_TELEGRAM_PROXY=http://127.0.0.1:7897
-# /dsh-egress-router (managed)
-```
-
-删掉这三行即可回到默认。补丁在 `storages\egress-router\patches\telegram-proxy.bak`，设置页的「兼容补丁 → 复原」也会还原原文件。
+回到默认：设置页「清除」，或删掉 `bots` 里的 `telegram` 条目后重启。
+若你从 0.7.0/0.7.1 升级，启动时会自动清掉旧 `.env` 受管块（`history` 里的 `env-cleanup`）。补丁在 `storages\egress-router\patches\telegram-proxy.bak`，设置页的「兼容补丁 → 复原」也会还原原文件。
 
 ## 完全卸载
 

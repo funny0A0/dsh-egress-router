@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | 安装布局（hoisted vs pnpm `.pnpm/<pkg>@<ver>`） | `findProfileRoot()` 从插件目录向上找「含 `cordis.patch.yml` 或 `dsh.profile` 的目录」，不数 `..` | `test/host-contract.test.mjs` |
 | Windows 文件名禁用字符 | 备份文件名把 `:`、`.` 换成 `-` | `test/platform.test.mjs` |
-| 换行 | 状态文件与受管 `.env` 一律 LF；`.env` 值里不会混入 `\r` | `test/platform.test.mjs` |
+| 换行 | 状态文件一律 LF（插件不再写 `.env`，0.7.2 起只清理自己写过的行） | `test/platform.test.mjs` |
 
 运行环境会随契约一起写进状态：
 

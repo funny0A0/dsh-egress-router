@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.2
+
+**修正 0.7.0 引入的启动崩溃**：0.7.0/0.7.1 把 `DSH_TELEGRAM_PROXY` 写进 `$DSH_HOME/.env`，
+而 DSH 启动器只允许「启动环境」设置这类变量，读到就拒绝启动——桌面版与 `dsh web` 同时无法启动。
+
+- 不再写 `.env`：机器人代理只注入 `process.env`（当前会话生效）并记录在 `state.bots`，启动时由插件重新注入。
+- 自动修复：启动时调用 `cleanupManagedEnv()`，删掉 0.7.0/0.7.1 写下的受管块与残留的 `DSH_TELEGRAM_PROXY=` 行，别的内容一字不动；`history` 记一条 `env-cleanup`。
+- 设置页提示改为「本会话生效」，并说明启动前生效要设操作系统环境变量（附 Windows/Linux 命令），不要写进 `.env`。
+- 文档同步：README / README.en / docs/install / docs/rollback / docs/compatibility 全部改写，删除「受管块」说法。
+- 测试 108 条：bots 增加 3 条（应用后 `.env` 字节不变、毒块被清除且只清我们写的行、干净 `.env` 原样保留）。
+
 ## 0.7.1
 
 跨平台与可读性：装得上、看得懂、坏了能定位。

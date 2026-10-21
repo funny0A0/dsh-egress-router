@@ -42,7 +42,7 @@ DSH 的传输策略是**「每个进程只有一个答案」**：`@deepseek-ai/d
 | **改写 + 回滚** | 只改 provider 的 `baseURL` 一行（保留注释与锚点），改前备份、改后校验，失败自动还原 |
 | **应用后自检** | 起监听 → 真实请求一次目标 → 不通就回滚，不会「看起来成功、用起来失败」 |
 | **指标** | 每个端口的请求数、上/下行字节、失败数、状态码分布、首字节延迟 p50/p95 |
-| **机器人代理** | Telegram 这类把地址写死在代码里的插件：补丁 + `DSH_TELEGRAM_PROXY`，并写进 `.env` 供下次启动 |
+| **机器人代理** | Telegram 这类把地址写死在代码里的插件：补丁 + `DSH_TELEGRAM_PROXY`，只注入本进程（写进 `$DSH_HOME/.env` 会让 DSH 拒绝启动） |
 | **兼容补丁** | 声明式补丁（包名 / 版本 / 文件 / 唯一锚点），重装后被冲掉会在下次启动自动修复 |
 | **漂移自愈** | 配置里的 `baseURL` 与运行监听不一致时自动校正；被外部反复改写则暂停并显示原因 |
 | **宿主契约探测** | 不靠版本号猜接口形状，依次尝试三种注册方式，结果记入状态 |
@@ -156,20 +156,33 @@ Invoke-RestMethod "http://127.0.0.1:8792/__health"
 | `metrics{}` | 每个路由的计数与延迟分位（样本在内存，重启从零累计） |
 | `backups[]` | 配置备份账本（最多 20 条），回滚依据 |
 | `patches{}` | 补丁账本（自修复只处理这里记录过的） |
-| `bots{}` | 机器人 → 代理映射（写 `.env` 的受管块） |
+| `bots{}` | 机器人 → 代理映射（启动时注入进程环境变量） |
 | `history[]` | 审计流水（最多 50 条，重复行 60s 内折叠） |
 | `hostContract` / `hostEnv` | 宿主接受的注册形状与当时的平台/Node 版本 |
 | `reconcilePaused{}` | 漂移自愈的暂停窗口（原因 + 到期时间） |
 
-### `$DSH_HOME/.env`（受管块）
+### 机器人代理与环境变量
 
-```
-# dsh-egress-router (managed) — bot egress
-DSH_TELEGRAM_PROXY=http://127.0.0.1:7897
-# dsh-egress-router (managed) end
+**本插件不写 `$DSH_HOME/.env`。** 该文件里的 `DSH_TELEGRAM_PROXY` 会让 DSH 启动器直接拒绝启动
+（0.7.1 曾这样做，导致桌面版与 Web 版同时无法启动），所以代理只做两件事：
+
+1. 应用时注入 `process.env`，当前会话立即生效；
+2. 记录在 `state.bots`，下次启动由插件在本进程重新注入。
+
+如果你希望变量在 DSH 启动**之前**就存在（例如别的进程也要用），请设置操作系统环境变量：
+
+```powershell
+# Windows：用户级，重启 DSH 生效
+[Environment]::SetEnvironmentVariable("DSH_TELEGRAM_PROXY", "http://127.0.0.1:7897", "User")
 ```
 
-只替换这一块，其余内容与 LF 换行保持原样（Windows 上也不会写入 `\r`）。
+```bash
+# Linux/macOS：写进 shell profile
+export DSH_TELEGRAM_PROXY=http://127.0.0.1:7897
+```
+
+如果你从 0.7.0/0.7.1 升级上来，启动时会自动清掉旧 `.env` 中的受管块（`history` 里有一条
+`env-cleanup`），只删我们写过的行，不动你自己的配置。
 
 ## HTTP 接口
 
@@ -187,7 +200,7 @@ DSH_TELEGRAM_PROXY=http://127.0.0.1:7897
 | `rollback` | POST | 按项或全局回滚最近一次改动 |
 | `test` | POST | 经已完成的中转发一次真实请求 |
 | `patches` / `patch` | GET / POST | 兼容补丁列表 / 应用 / 复原 / 复查 |
-| `bot` | POST | 给机器人设代理（写 `.env` 受管块） |
+| `bot` | POST | 给机器人设代理（注入本进程环境变量） |
 | `reconcile` | POST | 处理配置漂移（或解除暂停） |
 
 写操作要求 `POST` + `content-type: application/json`；来自明确外来 web Origin 的请求返回 `403`。
@@ -207,7 +220,7 @@ DSH_TELEGRAM_PROXY=http://127.0.0.1:7897
 | 「目标连不上，已自动回滚」 | 上游代理没起、节点被墙、目标域名错 | 先点「检查」；`/__health` 看中转是否在跑 |
 | 「宿主没有接受任何已知的接口注册形状」 | 宿主契约变了 | 路由与中转仍工作；把 `state.hostContract` 反馈到 issue |
 | 配置反复被外部改写 | 宿主与插件互相纠正 | 页面黄条点「恢复检查」；60s 内 3 次会自动暂停 10 分钟 |
-| Telegram 机器人连不上 | 其传输只读进程环境变量 | 该行选代理 →「用这个代理」（补丁 + `.env`），重启 |
+| Telegram 机器人连不上 | 其传输只读进程环境变量 | 该行选代理 →「用这个代理」（补丁 + 进程环境变量），重启 |
 | 应用成功但没生效 | 改端口 / 改目标后需要重建监听 | 重启 DSH |
 | 市场 / npm 装不上 | 安装走 registry 直连 | 确认 `registry.npmjs.org` 可达；本插件不代理它 |
 
@@ -282,8 +295,9 @@ scripts/        发布门禁
 | 0.5.4 | 回环恢复：撤销后重应用取回真实端点 |
 | 0.5.5 | 监视器读实时路由 + 熔断，已删路由不再写回 |
 | 0.5.6 | 内置端点兜底（openrouter / gemini / moonshot / deepseek） |
-| 0.6.0 | 舒适度：`.env` 持久化、空响应可读、原始地址可补、暂停可见 |
+| 0.6.0 | 舒适度：空响应可读、原始地址可补、暂停可见（其中的 `.env` 持久化已在 0.7.2 撤销） |
 | 0.7.0 | 发布准备：契约探测、API 快照、门禁、CI、发布/回滚文档 |
+| 0.7.2 | 修正：不再把 `DSH_TELEGRAM_PROXY` 写进 `.env`（那会让 DSH 拒绝启动），改为进程内注入 + 启动自动清理旧受管块 |
 | 0.7.1 | 跨平台：profile 根目录上溯、记录运行环境、契约降级提示、平台测试、README 重写 |
 
 完整变更见 [CHANGELOG.md](CHANGELOG.md)。

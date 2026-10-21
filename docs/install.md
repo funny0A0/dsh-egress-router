@@ -86,7 +86,7 @@ pnpm remove dsh-egress-router
 ```
 
 状态目录 `$DSH_HOME/storages/egress-router` 可以保留（下次安装会复用），也可以整个删掉。
-如果用过机器人代理，记得清掉 `$DSH_HOME/.env` 里的受管块。
+机器人代理记录在 `storages\egress-router\state.json` 的 `bots` 里，删掉该条目或点「清除」即可；`$DSH_HOME/.env` 不需要动（0.7.2 起不再写入，旧受管块会在启动时自动清理）。
 
 ## 安装期常见问题
 

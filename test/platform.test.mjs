@@ -10,7 +10,7 @@ import path from 'node:path'
 import yaml from 'js-yaml'
 import { planApply, commitApply } from '../lib/patcher.js'
 import { readRoutes, writeRoutes, stateDir } from '../lib/store.js'
-import { applyBotProxy, readManagedEnv } from '../lib/bots.js'
+import { applyBotProxy } from '../lib/bots.js'
 
 function tempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix + process.pid + '-' + Date.now() + '-'))
@@ -63,7 +63,7 @@ test('state.json is written with LF endings only', withHome(async (home) => {
   assert.equal(raw.includes('\r'), false)
 }))
 
-test('the managed .env block is LF-only and survives a re-apply', withHome(async (home) => {
+test('re-applying a bot proxy stays in-process and leaves .env alone', withHome(async (home) => {
   const dir = profileFixture()
   const imRoot = path.join(dir, 'node_modules', '@xmanrui', 'dsh-im')
   const imDir = path.join(imRoot, 'lib')
@@ -80,10 +80,12 @@ test('the managed .env block is LF-only and survives a re-apply', withHome(async
     replace: 'new Agent({ connections: 4, proxy: process.env.DSH_TELEGRAM_PROXY || "http://127.0.0.1:7897" })',
   }]
   const proxies = { clash: 'http://127.0.0.1:7897' }
-  applyBotProxy({ id: 'telegram', proxyName: 'clash', proxies, profileDir: dir, stateDir: path.join(home, 'storages', 'egress-router'), definitions })
-  applyBotProxy({ id: 'telegram', proxyName: 'clash', proxies, profileDir: dir, stateDir: path.join(home, 'storages', 'egress-router'), definitions })
-  const raw = fs.readFileSync(path.join(home, '.env'), 'utf8')
-  assert.equal(raw.includes('\r'), false, 'CRLF would leak a stray \\r into the proxy URL')
-  assert.equal(raw.split('DSH_TELEGRAM_PROXY=').length - 1, 1, 're-applying must not duplicate the assignment')
-  assert.equal(readManagedEnv('DSH_TELEGRAM_PROXY'), 'http://127.0.0.1:7897')
+  const envFile = path.join(home, '.env')
+  const original = 'NO_PROXY=localhost\n'
+  fs.writeFileSync(envFile, original)
+  const args = { id: 'telegram', proxyName: 'clash', proxies, profileDir: dir, stateDir: path.join(home, 'storages', 'egress-router'), definitions }
+  applyBotProxy(args)
+  applyBotProxy(args)
+  assert.equal(process.env.DSH_TELEGRAM_PROXY, 'http://127.0.0.1:7897', 'the value must be in the process environment')
+  assert.equal(fs.readFileSync(envFile, 'utf8'), original, 'the launcher rejects this name in .env, so it must never be written')
 }))

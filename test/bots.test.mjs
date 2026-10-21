@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
-import { botList, applyBotProxy, clearBotProxy, restoreBots } from '../lib/bots.js'
+import { botList, applyBotProxy, clearBotProxy, cleanupManagedEnv, restoreBots } from '../lib/bots.js'
 import { loadDefinitions } from '../lib/patches.js'
 import { makeHandler } from '../lib/routes.js'
 import { readBots, writeBot } from '../lib/store.js'
@@ -211,6 +211,50 @@ await check('the API exposes bot rows and applies a proxy through ?op=bot', asyn
     headers: { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' },
   })
   assert.equal(hostile.status, 403)
+})
+
+await check('a bot proxy never writes to $DSH_HOME/.env', async () => {
+  delete process.env[ENV]
+  const { profileDir } = makeProfile()
+  const { home, stateDir } = isolateState()
+  const envFile = path.join(home, '.env')
+  const original = 'NO_PROXY=localhost,127.0.0.1,::1\nMY_SETTING=keep-me\n'
+  fs.writeFileSync(envFile, original)
+  applyBotProxy({ id: 'telegram', proxyName: 'clash', proxies: PROXIES, profileDir, stateDir })
+  assert.equal(fs.readFileSync(envFile, 'utf8'), original, '.env must stay byte-identical')
+  assert.equal(process.env[ENV], PROXIES.clash)
+})
+
+await check('the repair removes a poisoned managed block and nothing else', async () => {
+  const { home } = isolateState()
+  const envFile = path.join(home, '.env')
+  fs.writeFileSync(envFile, [
+    'NO_PROXY=localhost,127.0.0.1,::1',
+    '# dsh-egress-router (managed) — bot egress',
+    ENV + '=http://127.0.0.1:7897',
+    '# /dsh-egress-router (managed)',
+    'KEEP=me',
+    ENV + '=http://stray:1',
+    '',
+  ].join('\n'))
+  const result = cleanupManagedEnv({ envVar: ENV })
+  assert.equal(result.changed, true)
+  assert.equal(result.removed.length, 2)
+  const after = fs.readFileSync(envFile, 'utf8')
+  assert.equal(after.includes(ENV), false, 'no reserved assignment may survive')
+  assert.match(after, /NO_PROXY=localhost/)
+  assert.match(after, /KEEP=me/)
+  const again = cleanupManagedEnv({ envVar: ENV })
+  assert.equal(again.changed, false)
+})
+
+await check('a clean .env is left untouched by the repair', async () => {
+  const { home } = isolateState()
+  const envFile = path.join(home, '.env')
+  const text = 'NO_PROXY=localhost\n'
+  fs.writeFileSync(envFile, text)
+  assert.deepEqual(cleanupManagedEnv({ envVar: ENV }), { changed: false, removed: [] })
+  assert.equal(fs.readFileSync(envFile, 'utf8'), text)
 })
 
 const passed = results.filter((item) => item.ok).length
