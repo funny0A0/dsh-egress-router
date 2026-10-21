@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({
       portCheck: '端口检查',
       loading: '正在加载…',
       unavailable: '接口不可用：',
+      profileMissing: '没找到 profile 的 cordis.patch.yml（插件以为 profile 在 {dir}）。扫描结果会是空的，请把这一段发给维护者。',
       scanning: '扫描中…',
       scanDone: '扫描完成：{n} 项',
       scanFailed: '扫描失败：',
@@ -138,6 +139,7 @@ window.__ModuleLoader__.load({
       portCheck: 'Check ports',
       loading: 'Loading…',
       unavailable: 'API unavailable: ',
+      profileMissing: 'This plugin could not find the profile cordis.patch.yml (it looked in {dir}). Scans will come back empty — please report this output.',
       scanning: 'Scanning…',
       scanDone: 'Scan finished: {n} targets',
       scanFailed: 'Scan failed: ',
@@ -513,8 +515,10 @@ window.__ModuleLoader__.load({
           next.discovered = results[1]
           if (results[1] && results[1].warnings) next.warnings = results[1].warnings
           setData(next)
+          if (!quiet) setMessage(null)
           return next
         }).catch(function (err) {
+          if (!quiet) setMessage(null)
           if (quiet) setData(function (prev) { return Object.assign({}, prev, { error: err.message }) })
           else setData({ error: err.message })
         })
@@ -796,6 +800,13 @@ window.__ModuleLoader__.load({
       if (data.error) return h('div', { style: box }, t('unavailable') + data.error)
       if (data.loading) return h('div', { style: box }, t('loading'))
 
+      // Silent-failure guard: a wrong profileDir makes every scan come back empty, which reads
+      // as "there is nothing to configure" instead of "the plugin is looking in the wrong
+      // place". Say it out loud (0.7.3).
+      var profileWarning = data.profileOk === false
+        ? h('div', { style: box }, t('profileMissing', { dir: data.profileDir || '' }))
+        : null
+
       var discovered = data.discovered || { items: [] }
       var listening = {}
       ;(data.status || []).forEach(function (item) { listening[item.id] = item })
@@ -933,6 +944,7 @@ window.__ModuleLoader__.load({
             )
           )),
         message ? h('div', { style: Object.assign({}, box, hint, { padding: '8px 12px' }) }, message) : null,
+        profileWarning,
         (data.paused || []).map(function (entry, index) {
           return h('div', {
             key: 'p' + index,

@@ -119,3 +119,29 @@ await check('the client parses the body as text and explains an empty response',
   assert.equal(source.includes('emptyResponse'), true)
 })
 
+// 0.7.3 — the plugin ships its own cordis.patch.yml at the package root, so recognising a
+// profile by that file made the upward walk stop one level short and every profile-relative
+// read looked at node_modules/dsh-egress-router: discovery returned no targets at all and the
+// patch rows claimed the bot package was not installed.
+await check('profile discovery skips the plugin package that ships its own cordis.patch.yml', async () => {
+  const { findProfileRoot, findProfileByDependency } = await import('../lib/index.js')
+  const profileDir = tmp('egress-root-')
+  fs.writeFileSync(path.join(profileDir, 'package.json'), JSON.stringify({ name: 'desktop', dsh: { profile: { bundles: [] } } }))
+  fs.writeFileSync(path.join(profileDir, 'cordis.patch.yml'), PATCH)
+  const pkgDir = path.join(profileDir, 'node_modules', 'dsh-egress-router')
+  fs.mkdirSync(path.join(pkgDir, 'lib'), { recursive: true })
+  fs.writeFileSync(path.join(pkgDir, 'package.json'), JSON.stringify({ name: 'dsh-egress-router', dsh: { bundle: { patch: './cordis.patch.yml' } } }))
+  fs.writeFileSync(path.join(pkgDir, 'cordis.patch.yml'), PATCH)
+  assert.equal(findProfileRoot(path.join(pkgDir, 'lib')), profileDir)
+
+  // Without dsh.profile the second signal still finds it: the profile depends on this package.
+  const plain = tmp('egress-root-dep-')
+  fs.writeFileSync(path.join(plain, 'package.json'), JSON.stringify({ name: 'desktop', dependencies: { 'dsh-egress-router': 'file:x.tgz' } }))
+  const nested = path.join(plain, 'node_modules', 'dsh-egress-router', 'lib')
+  fs.mkdirSync(nested, { recursive: true })
+  fs.writeFileSync(path.join(plain, 'node_modules', 'dsh-egress-router', 'package.json'), JSON.stringify({ name: 'dsh-egress-router' }))
+  fs.writeFileSync(path.join(plain, 'node_modules', 'dsh-egress-router', 'cordis.patch.yml'), PATCH)
+  assert.equal(findProfileRoot(nested), null)
+  assert.equal(findProfileByDependency(nested), plain)
+})
+

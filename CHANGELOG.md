@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.3
+
+修一个让整页看起来「空」的目录识别错误。
+
+- `findProfileRoot` 以前把「目录里有 cordis.patch.yml」当作 profile 标记，而本插件自己的包里就带一个同名文件，于是向上查找在 `node_modules/dsh-egress-router` 就停了。
+- 后果：发现层读不到 profile 的 `cordis.patch.yml`，外连目标永远显示 0 项；补丁检查去 `<插件目录>/node_modules/@xmanrui/dsh-im` 找包，报「未安装」。
+- 现在只认 `package.json` 里的 `dsh.profile`；再加一路兜底：哪个目录 `dependencies` 里依赖本插件，哪个就是 profile。
+- `?op=state` 新增 `profileOk`；为 false 时设置页顶部直接说明「插件找错目录了」，不再是静默的空列表（API 快照同步更新）。
+- 顺手修掉常驻的「正在加载…」：`refreshAll()` 成功/失败后都会清掉这条提示。
+- 测试：新增 profile 识别用例（插件自带 patch 不得被当成 profile；无 dsh.profile 时按依赖兜底），总 99 条。
 ## 0.7.2
 
 **修正 0.7.0 引入的启动崩溃**：0.7.0/0.7.1 把 `DSH_TELEGRAM_PROXY` 写进 `$DSH_HOME/.env`，

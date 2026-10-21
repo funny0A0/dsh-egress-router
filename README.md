@@ -299,6 +299,7 @@ scripts/        发布门禁
 | 0.7.0 | 发布准备：契约探测、API 快照、门禁、CI、发布/回滚文档 |
 | 0.7.2 | 修正：不再把 `DSH_TELEGRAM_PROXY` 写进 `.env`（那会让 DSH 拒绝启动），改为进程内注入 + 启动自动清理旧受管块 |
 | 0.7.1 | 跨平台：profile 根目录上溯、记录运行环境、契约降级提示、平台测试、README 重写 |
+| 0.7.3 | 修 profile 目录识别：扫描不再永远为空、补丁状态不再误报未安装，`state` 增加 `profileOk` |
 
 完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 

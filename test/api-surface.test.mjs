@@ -23,6 +23,7 @@ const STATE_KEYS = [
   'patches',
   'paused',
   'profileDir',
+  'profileOk',
   'routes',
   'schemaVersion',
   'status',
