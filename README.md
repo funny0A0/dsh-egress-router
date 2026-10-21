@@ -1,237 +1,293 @@
 # dsh-egress-router
 
-给 DSH 里**单个外连目标**开一个本机端口，请求经它中转；没开端口的目标继续直连。
+> **只让需要代理的端点走代理，其余全部直连。**
+> 一个 DSH 插件：给单个外连目标开一个本机端口，请求经它转发；没开端口的目标照旧直连。
 
-DSH 的传输策略是「每个进程只有一个答案」（`@deepseek-ai/dsh-http-proxy` 的设计），
-所以设了 `HTTPS_PROXY` 就是全进程走代理——代理一挂，账号、插件市场、pnpm 全挂。
-本插件把「走代理」从进程级降到目标级：只有你点名的那几个域名经中转，其余照旧直连。
+[![ci](https://github.com/funny0A0/dsh-egress-router/actions/workflows/ci.yml/badge.svg)](https://github.com/funny0A0/dsh-egress-router/actions/workflows/ci.yml)
+![node](https://img.shields.io/badge/node-%E2%89%A520-informational)
+![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-informational)
+![license](https://img.shields.io/badge/license-MIT-informational)
 
-```
-DSH 插件 ──baseURL──▶ 127.0.0.1:8791 ──CONNECT/TLS──▶ 上游代理(可选) ──▶ 目标
-                        （每目标一个端口，独立开关）
-```
+---
 
-## 组成
+## 为什么需要它
 
-| 文件 | 作用 |
+DSH 的传输策略是**「每个进程只有一个答案」**：`@deepseek-ai/dsh-http-proxy` 在进程启动时读一次
+`HTTPS_PROXY`，之后所有出站 HTTPS 都走同一个代理，没有 per-provider 开关。
+
+于是只要设了全局代理，而代理客户端没在跑（或节点被墙、被限速），就会一起坏：
+
+| 走代理的请求 | 后果 |
 | --- | --- |
-| `lib/index.js` | 插件入口：启动已配置的监听端口，挂载 `/plugins/egress-router` 接口，注册设置页 |
-| `lib/manager.js` | 端口生命周期（start/stop/sync），每个路由一个监听器，绑定 127.0.0.1 |
-| `lib/relay.js` | 转发核心：CONNECT 隧道 + 可选 TLS，keep-alive 复用连接；`/__health` 探活 |
-| `lib/discovery/index.js` | 只读发现：从 `cordis.patch.yml`、`.env`、已装 bundle 默认配置里找工作区外的外连目标 |
-| `lib/patcher.js` | 改配置：预览 diff → 备份 → 原子写 → YAML 校验，失败自动回滚 |
-| `lib/routes.js` | 设置页用的 JSON 接口（`?op=state|discover|probe|apply|rollback`） |
-| `client/client.js` | 设置页「出口路由」标签页 |
+| `platform.deepseek.com`（账号资料、余额） | 设置页显示「账号资料暂不可用」 |
+| 插件市场目录（`awesome-dsh-plugin.com`、npm registry） | 「插件目录加载失败」 |
+| `pnpm add` 安装/升级插件 | 装不上，插件版本停在旧的 |
+| 会话本身 | **正常**——因为 `api.deepseek.com` 在 `NO_PROXY` 里直连 |
 
-## 安装（本地私有）
+三种做法对比：
+
+| 做法 | 故障半径 | 配置粒度 |
+| --- | --- | --- |
+| 全局 `HTTPS_PROXY` | 代理一挂，账号 / 市场 / 安装 **全挂** | 进程级，不可分 |
+| 全部直连 | 需要代理的端点（Google 系等）不可用 | 无 |
+| **本插件** | 只有一个中转挂了才影响那一个目标 | **每个目标** |
+
+## 它做什么
+
+| 能力 | 说明 |
+| --- | --- |
+| **逐目标路由** | 每个目标一个 `127.0.0.1` 端口，可选「直连」或某个上游代理；端口可自定义 |
+| **发现** | 从 `cordis.patch.yml`、`.env`、已装插件的默认配置里找工作区外的 HTTPS 目标，标出「已路由 / 待确认 / 受保护」 |
+| **探活** | 同一目标分别试直连与经代理，返回能否连通、耗时、是否只到 TLS |
+| **改写 + 回滚** | 只改 provider 的 `baseURL` 一行（保留注释与锚点），改前备份、改后校验，失败自动还原 |
+| **应用后自检** | 起监听 → 真实请求一次目标 → 不通就回滚，不会「看起来成功、用起来失败」 |
+| **指标** | 每个端口的请求数、上/下行字节、失败数、状态码分布、首字节延迟 p50/p95 |
+| **机器人代理** | Telegram 这类把地址写死在代码里的插件：补丁 + `DSH_TELEGRAM_PROXY`，并写进 `.env` 供下次启动 |
+| **兼容补丁** | 声明式补丁（包名 / 版本 / 文件 / 唯一锚点），重装后被冲掉会在下次启动自动修复 |
+| **漂移自愈** | 配置里的 `baseURL` 与运行监听不一致时自动校正；被外部反复改写则暂停并显示原因 |
+| **宿主契约探测** | 不靠版本号猜接口形状，依次尝试三种注册方式，结果记入状态 |
+| **中英双语** | 跟随浏览器语言 |
+
+## 工作原理
+
+```
+              ┌──────────────────────── DSH 宿主进程 ────────────────────────┐
+ provider ───▶│ baseURL = http://127.0.0.1:8792/v1beta/openai                │
+ (cordis      │            │                                                  │
+  patch)      │            ▼                                                  │
+              │   RelayManager（每个路由一个 http.Server，只绑 127.0.0.1）    │
+              │            │  keep-alive，TLS 复用                            │
+              └────────────┼──────────────────────────────────────────────────┘
+                           ▼
+                 CONNECT 隧道 ──▶ 上游代理（可选，如 clash 127.0.0.1:7897） ──▶ 目标
+```
+
+三个要点：
+
+1. **路由存在 `state.json`，不写进配置。** `cordis.patch.yml` 里只留一条 `id` 覆盖（`proxies` 等）。
+2. **重启自动重建。** 监听由持久化的 `routes` 恢复；配置漂移会被校正。
+3. **写配置是外科手术。** 只替换 provider 的 `baseURL` 值，其余字节不动；同时留备份与账本。
+
+## 安装
+
+前置：**Node ≥ 20**、**DSH 桌面版 ≥ 0.2.1-rc.2**、`pnpm`。
+
+### Windows
 
 ```powershell
-cd C:\Users\<你>\.dsh\profiles\desktop
+cd "$env:USERPROFILE\.dsh\profiles\desktop"
 pnpm add file:F:\projects_all\AI_projects\dsh-egress-router
+# 或在发布后： pnpm add dsh-egress-router
 ```
 
-然后在 `package.json` 的 `dsh.profile.bundles` 里加上 `dsh-egress-router`，重启 DSH。
+### Linux / macOS
 
-## 用法
+```bash
+cd ~/.dsh/profiles/desktop
+pnpm add file:/path/to/dsh-egress-router
+# 或在发布后： pnpm add dsh-egress-router
+```
 
-设置 → 插件 → **出口路由**：
+然后在 `profiles/desktop/package.json` 的 `dsh.profile.bundles` 里加入 `"dsh-egress-router"`，
+重启 DSH。页面：**设置 → 插件 → 出口路由**。
 
-1. 点「扫描」：列出模型 provider、Telegram、以及配置里出现的其它 https 目标（标「待确认」的需自己判断）。
-2. 点「检查」：同一目标分别试直连和经代理，告诉你哪个通、耗时多少。
-3. 填端口（建议 8791 起，插件会提示占用），点「应用」：自动改写该 provider 的 `baseURL` 到
-   `http://127.0.0.1:<端口><原路径>`，并立即起监听。
-4. 改错了点「回滚上次改动」：从备份恢复 `cordis.patch.yml` 并停掉对应端口。
+安装与升级的完整说明见 [docs/install.md](docs/install.md)。
 
-配置也可以手写在 `cordis.patch.yml`：
+### 安装后自检
+
+```powershell
+# 1) 版本
+Get-Content "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-egress-router\package.json" | Select-String version
+# 2) 接口（端口随实例变化，从设置页地址栏取）
+Invoke-RestMethod "http://127.0.0.1:<GUI端口>/plugins/egress-router?op=state"
+# 3) 某个中转是否活着
+Invoke-RestMethod "http://127.0.0.1:8792/__health"
+```
+
+## 快速上手
+
+1. **扫描** —— 列出模型 provider、Telegram、以及配置里的其它 HTTPS 目标。
+2. **检查** —— 看「直连」和「经代理」哪个通；不确定的点「找端口」拿一个空闲端口。
+3. **选代理** —— 每行一个下拉：`直连` 或 `config.proxies` 里的名字（如 `clash`）。
+4. **应用** —— 写入 `baseURL`、起监听、真实请求一次自检；成功后再点一次刷新即可看到「运行中」。
+5. **重启 DSH**（首次或改端口后）。之后监听随宿主重建，不需要再动配置。
+
+## 设置页说明
+
+**顶部**：`扫描`（重新发现）、`端口检查`（批量看占用）、`回滚上次改动`（最近一次应用的逆操作）。
+
+**每一行**
+
+| 元素 | 含义 |
+| --- | --- |
+| `模型` / `消息` / `外连` | 目标类型；`外连` 表示从配置里扫到但无法判定用途（标「待确认」） |
+| `已路由` | 这个目标当前指向本机中转 |
+| `运行中 :8792` / `未运行` | 监听是否真的起来了 |
+| `42 次 · ↑14.9KB ↓86.1KB · p50 231.4ms · 5xx 1` | 该端口累计指标；`尚未有流量` 表示还没请求过 |
+| `经 clash` / `直连` | 该行选中的上游 |
+| `检查` `预检` `找端口` `应用` `测试` `撤销` | 探活、看 diff、取空闲端口、落盘生效、经中转发一次真实请求、按项回滚 |
+
+**兼容补丁**：列出声明式补丁的状态（`已生效` / `待应用` / `锚点缺失` / 包未安装）。
+`已生效` 且无备份时说明补丁来自 `pnpm patch`，只读。
+
+**最近操作**：最近 10 条审计（应用、回滚、补丁、启动、配置校正、暂停）。
+
+## 配置
+
+### `cordis.patch.yml`（只留代理表）
 
 ```yaml
 - id: egress-router
-  name: dsh-egress-router
   config:
     proxies:
       clash: http://127.0.0.1:7897
-    routes:
-      - id: llm:gemini
-        target: generativelanguage.googleapis.com:443
-        listenPort: 8791
-        proxy: clash
-      - id: im:telegram
-        target: api.telegram.org:443
-        listenPort: 8792
-        proxy: clash
 ```
+
+> 不要写 `name: dsh-egress-router`：`bundles` 已经加载了本插件，再写 `name` 会被当成第二个实例。
+
+### `$DSH_HOME/storages/egress-router/state.json`
+
+`version: 8`、`schemaVersion: 1`。主要字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `routes[]` | `{ id, target, listenPort, proxy, tls, tuning, originBaseURL }` |
+| `listeners[]` | 最近一次同步结果（`ok` / `error`），重启后可见 |
+| `metrics{}` | 每个路由的计数与延迟分位（样本在内存，重启从零累计） |
+| `backups[]` | 配置备份账本（最多 20 条），回滚依据 |
+| `patches{}` | 补丁账本（自修复只处理这里记录过的） |
+| `bots{}` | 机器人 → 代理映射（写 `.env` 的受管块） |
+| `history[]` | 审计流水（最多 50 条，重复行 60s 内折叠） |
+| `hostContract` / `hostEnv` | 宿主接受的注册形状与当时的平台/Node 版本 |
+| `reconcilePaused{}` | 漂移自愈的暂停窗口（原因 + 到期时间） |
+
+### `$DSH_HOME/.env`（受管块）
+
+```
+# dsh-egress-router (managed) — bot egress
+DSH_TELEGRAM_PROXY=http://127.0.0.1:7897
+# dsh-egress-router (managed) end
+```
+
+只替换这一块，其余内容与 LF 换行保持原样（Windows 上也不会写入 `\r`）。
+
+## HTTP 接口
+
+`GET|POST http://127.0.0.1:<GUI端口>/plugins/egress-router?op=<op>`
+
+| op | 方法 | 说明 |
+| --- | --- | --- |
+| `state` | GET | 页面所需的全部状态（19 个键，见 `test/api-surface.test.mjs`） |
+| `discover` | GET | 重新扫描目标并缓存 |
+| `probe` | POST | 探活；只接受已扫描到的目标，拒绝私有地址 |
+| `plan` | POST | 只算 diff / 端口 / 警告，不写文件 |
+| `ports` | GET | `?op=ports&port=8791&port=8792` 批量查占用 |
+| `suggest` | POST | 取一个空闲端口（跳过本插件已占用的） |
+| `apply` | POST | 应用：起监听 → 写 `baseURL` → 自检；失败自动回滚 |
+| `rollback` | POST | 按项或全局回滚最近一次改动 |
+| `test` | POST | 经已完成的中转发一次真实请求 |
+| `patches` / `patch` | GET / POST | 兼容补丁列表 / 应用 / 复原 / 复查 |
+| `bot` | POST | 给机器人设代理（写 `.env` 受管块） |
+| `reconcile` | POST | 处理配置漂移（或解除暂停） |
+
+写操作要求 `POST` + `content-type: application/json`；来自明确外来 web Origin 的请求返回 `403`。
+
+常见错误码：`invalid_port`、`port_in_use`、`provider_not_found`、`not_patchable`、
+`private_target`、`unknown_target`、`unknown_proxy`、`apply_unverified`、`listener_failed`、
+`file_changed_since_backup`（409）、`no_backup`、`stale_plan`（409）、`invalid_tuning`、
+`unauthorized`（403）、`reconcile_paused`（409）。
+
+## 故障排查
+
+| 症状 | 原因 | 处理 |
+| --- | --- | --- |
+| 设置页「账号资料暂不可用」「插件目录加载失败」 | 进程里有指向未运行代理的 `HTTPS_PROXY` | 删掉 `$DSH_HOME/.env` 里的全局代理，改用本插件按目标代理 |
+| 「接口不可用：Unexpected end of JSON input」 | 页面请求拿到空响应（插件 API 未挂载/宿主重载中） | 完全退出 DSH 再启动；页面会显示契约降级提示 |
+| 「应用失败：port … is already in use」 | 端口被别的进程占用 | 点「找端口」取一个空闲端口再应用 |
+| 「目标连不上，已自动回滚」 | 上游代理没起、节点被墙、目标域名错 | 先点「检查」；`/__health` 看中转是否在跑 |
+| 「宿主没有接受任何已知的接口注册形状」 | 宿主契约变了 | 路由与中转仍工作；把 `state.hostContract` 反馈到 issue |
+| 配置反复被外部改写 | 宿主与插件互相纠正 | 页面黄条点「恢复检查」；60s 内 3 次会自动暂停 10 分钟 |
+| Telegram 机器人连不上 | 其传输只读进程环境变量 | 该行选代理 →「用这个代理」（补丁 + `.env`），重启 |
+| 应用成功但没生效 | 改端口 / 改目标后需要重建监听 | 重启 DSH |
+| 市场 / npm 装不上 | 安装走 registry 直连 | 确认 `registry.npmjs.org` 可达；本插件不代理它 |
+
+## 兼容性
+
+| 宿主 | 平台 | 状态 |
+| --- | --- | --- |
+| DSH 桌面版 `0.2.1-rc.2` | Windows 11（Node 24） | **实测通过**（本机） |
+| DSH 桌面版 `0.2.0-rc.2` | Windows / Linux | 未实测（契约探测会尝试三种形状） |
+| 其它 `0.2.x` | Windows / Linux | 未实测；失败时显式降级 |
+
+Linux 侧的 CI 覆盖见 `.github/workflows/ci.yml`（Windows/Linux × Node 20/24：语法检查、测试、打包门禁）。
+细节与升级检查清单：[docs/compatibility.md](docs/compatibility.md)。
 
 ## 安全边界
 
-- 只监听 `127.0.0.1`，不对外开端口。
-- `platform.deepseek.com`、`api.deepseek.com`、`registry.npmjs.org`、插件市场目录源等**受保护目标**在 UI 里只展示不建议改——它们是账号、装插件、看市场的命脉，走中转只会扩大故障面。
-- 每次改配置前备份到 `$DSH_HOME/storages/egress-router/backups/`，写入后重新 parse 校验，失败自动还原。
-- 中转进程挂了只影响开了端口的目标；直连目标不受影响（这正是相对全局代理的改进）。
+- 只绑 `127.0.0.1`，不对局域网/公网开放。
+- 写操作需要 JSON POST + 同源意图；不返回任何 `Access-Control-*`，跨源请求会在预检阶段被浏览器拦下。
+- **受保护目标**（`platform.deepseek.com`、`api.deepseek.com`、`registry.npmjs.org`、插件市场目录源）
+  只展示、不建议改写——它们是账号、安装、市场的命脉，绕中转只会扩大故障面。
+- 改配置前备份、写入后重新解析校验、失败还原；补丁要求锚点唯一且原文件可复原。
 
 ## 已知限制
 
-- 改不了**别的插件进程内部**的请求（比如 `@xmanrui/dsh-im` 的 HTTP 客户端用的是环境代理）；这类目标需要插件自己暴露端点，或继续用插件自带的代理配置。
-- 只支持 HTTP/1.1 转发，不支持 HTTP/2 明文升级、SOCKS、PAC。
-- 上游代理目前只支持 `http://host:port` 形式（CONNECT 隧道）。
+- 不能替代**别的插件进程内部**的 HTTP 客户端；这类目标要么插件自己支持代理，要么用兼容补丁。
+- 只转发 HTTP/1.1；不支持 HTTP/2 明文升级、SOCKS、PAC。
+- 上游代理只支持 `http://host:port`（CONNECT 隧道），不支持需要认证的代理。
+- 指标中的 p50/p95 样本只在内存，重启后从零累计。
+- 兼容补丁绑定包版本前缀；插件升级后可能需要更新补丁锚点（启动时会报「锚点缺失」）。
 
-## 卸载
-
-```powershell
-cd C:\Users\<你>\.dsh\profiles\desktop
-pnpm remove dsh-egress-router
-```
-
-并从 `dsh.profile.bundles` 删掉，重启。已改写的 `baseURL` 请先用「回滚」恢复，或手工改回原地址。
-
-## 0.2.0 的行为约定（重要）
-
-- **写入是持久的**：点「应用」会同时改 provider 的 `baseURL` 和插件自己的 `routes`，
-  重启 DSH 后监听自动重建，不需要再手动改文件。
-- **写入需要同源**：只有设置页里的请求（`Sec-Fetch-Site: same-origin`，或 `Origin` 与 `Host` 一致）
-  才能 `apply`/`rollback`；本机脚本直接调接口会得到 `403 unauthorized`。
-- **失败不改配置**：端口被占、监听起不来、写入校验失败时，会撤掉监听并把文件恢复原样，
-  返回非 2xx 与原因。
-- **只有 `llm:*` 可改写**：`im:telegram`、`cfg:*` 这类没有可改 `baseURL` 的目标只做提示，
-  需要在对应插件里改（例如 `dsh-im` 的 Telegram 代理用 `pnpm patch`）。
 ## 开发
 
-```powershell
-node test\run-all.mjs
-```
-
-`node --test` 在 DSH 沙箱里会因 worker 进程 `spawn EPERM` 失败，所以用自带 runner（逐文件在进程内跑）。
-测试覆盖：转发与 502 降级、发现规则、配置改写与回滚、插件装配、客户端 bundle 装配。
-
-## 0.2.1 的配置形态（重要）
-
-插件**不会**把自己的配置写进 `cordis.patch.yml`。路由存在
-`$DSH_HOME/storages/egress-router/state.json`；配置里最多留一条覆盖项：
-
-```yaml
-- id: egress-router
-  config:
-    proxies:
-      clash: http://127.0.0.1:7897
-```
-
-不要再写 `name: dsh-egress-router`：`bundles` 里已加载本插件，再写 `name` 会被当成第二个实例。
-
-## 0.2.2 的行为变化（重要）
-
-- **应用后自检**：点「应用」会先起监听，再用同一条代理链路连一次目标；连不上就自动回滚，
-  界面显示 `apply_unverified` 的原因。代理没开时不会再「看起来成功、用起来失败」。
-- **回滚会拒绝覆盖手改**：如果 apply 之后你自己编辑过 `cordis.patch.yml`，回滚返回
-  `file_changed_since_backup`（HTTP 409），确认要覆盖时传 `force`。
-- **只动一行**：`baseURL` 的改写保留文件里的注释、锚点与别名；写不进去时才退回整份重写。
-- **探测只测你见过的目标**：`probe` 不再接受任意地址，私有地址和未扫描到的域名一律 400。
-- **状态版本 4**：`state.json` 里 `backups` 带两个文件的 SHA-256，`routes`/`listeners`/`history`
-  仍在同一文件里；旧版本状态会在首次读取时自动升级。
-
-## 0.2.3 的修复（重要）
-
-- **桌面版可以点「应用」了**：桌面 GUI 的页面源是 `dsh-app://app`，请求经 shell 转发后
-  `Origin` 不等于本机 `Host`，0.2.2 的同源判定会误伤。现在写入只要求
-  `POST` + `content-type: application/json`，并拒绝明确来自外来 `http(s)` Origin 的请求。
-- **安全含义未变**：跨源 JSON 请求需要 CORS 预检，而本路由不返回任何 `Access-Control-*`，
-  浏览器会在发出前拦截；本机进程本来就能直接改配置文件，头校验不是防它的手段。
-## 0.2.4 的调整
-
-- **自检更宽容**：应用后的探测超时 12s、最多重试 2 次（原 5s / 1 次）。代理节点只是慢时不会再被
-  判成「目标连不上」而回滚。
-- **失败原因可见**：失败提示后面会带上服务端返回的具体错误，便于区分「节点慢」「节点挂了」
-  「目标域名错」。
-- **前端等待 90s**：写请求不再在 20s 就报超时，避免服务端还在验证时前端先放弃。
-## 0.5.6 的变化
-
-provider 的 `baseURL` 停在回环端口、而本地没有原始地址记录时，按内置的已知端点兜底
-（openrouter / gemini / moonshot / deepseek），不再卡在「请手动恢复」。
-
-## 0.5.5 的变化
-
-监视器改为每轮读取 `state.routes`，撤销过的路由不会再被写回配置；同一 provider 在 60 秒内
-修复 3 次后自动暂停 10 分钟（`reconcile-paused`），避免和宿主互抢。
-
-## 0.5.0 的变化
-
-聊天机器人（Telegram）不再只能点「检查」：这一行有代理下拉和「用这个代理」，背后是
-`lib/bots.js` 的「补丁 + 环境变量」组合，选择会存进 `state.bots` 并在下次启动时自动恢复。
-
-0.4.4 — 每行代理选择器：直连 / clash 可选，选项来自 `config.proxies`，显式直连会清空代理。0.5.0 — 机器人代理接管：Telegram 行可选代理并自动应用补丁，状态 v7。
-0.5.1 — 配置自愈：`cordis.patch.yml` 与运行路由漂移时自动修复，页面显示黄条。
-0.5.2 — 热重载接管：宿主重载插件时新实例先拆掉旧实例，不再出现「无路由」的 404。
-0.5.3 — 应用/回滚后同时刷新状态与发现列表，不再需要手动「扫描」。
-0.5.4 — 回环恢复：撤销后重应用自动取回真实端点，悬空回环行标记「中转已撤销」。
-0.5.5 — 监视器读实时路由 + 熔断，已删除的路由不会被写回。
-0.5.6 — 内置端点兜底（openrouter/gemini/moonshot/deepseek），缺失端点也能重建。
-0.6.0 — 舒适度：bot 代理写 `.env`、空响应可读、原始地址可补、暂停落盘可见、文案接线。
-0.7.0 — 发布准备：宿主契约探测与兼容模式、API 快照测试、产物门禁、CI、发布/回滚文档、包元数据。
-0.5.0 — 机器人代理接管：Telegram 行可选代理并自动应用补丁，状态 v7。
-0.5.1 — 配置自愈：检测并修复「配置文件指向旧端口」的漂移，启动与运行期都会校正。
-0.5.2 — 热重载接管：新实例先关旧实例再注册，修复设置页 404 空体（接口不可用）。
-0.5.3 — 应用/回滚后自动刷新行数据（含挂载时），不必再手动点「扫描」。
-0.5.4 — 撤销不再把 provider 留在一个已移除的中转上：记录原始端点、撤销后自动回填、悬空行标「中转已撤销」。
-
-## 0.3.0 的变化（可观测与开关）
-
-- **每条路由的实时指标**：请求数、上/下行字节、失败数、状态码分布、首字节延迟 p50/p95，
-  直接显示在设置页每行下面（跟着 `?op=state` 一起返回）。
-- **真实测试按钮**：点「测试」会让 relay 真发一次 `HEAD`（默认 `/`，可在高级里改），
-  返回 HTTP 状态与耗时；以前只能测到 TLS 握手。
-- **HTTP 层探活**：应用后的自检现在会读 HTTP 状态码，`connect ok` 但随即被重置的连接
-  不会再被当成成功。
-- **预检（Plan）**：`?op=plan` 只算 diff、端口占用与警告，不写任何文件；设置页里「应用」
-  之前先看 diff 再决定。
-- **端口批量预检**：`?op=ports&port=...&port=...` 一次返回哪些端口可绑，避免逐个试。
-- **连接参数可调**：每条路由可设 `maxSockets`（1–64）、`timeoutMs`（1s–10min）、
-  `connectTimeoutMs`（1s–2min）；默认 6 / 90s / 12s，超出范围返回 `invalid_tuning`。
-- **界面中英双语**：按浏览器语言自动选 zh/en。
-
-## 兼容性与契约探测（0.7.0）
-
-宿主没有公开的插件契约，而且变过。这一版不再靠版本号猜：
-
-- 注册端点时依次尝试 `{kind:"exact"}` → `{path, handler}` → 位置参数，并把结果记进 `state.hostContract` 与历史。
-- 槽位没有 `inject` 时退回按名字 `register`，控制台会说明处于兼容模式。
-- 全部形状都不被接受时插件仍然加载（监听与状态照常），只是设置页没有 API——这是**显式降级**，不是静默 404。
-- `?op=state` 的键集合与错误码由 `test/api-surface.test.mjs` 固化，宿主改形状会先让测试红。
-
-矩阵与升级检查清单见 [docs/compatibility.md](docs/compatibility.md)。
-
-## 发布
-
-```powershell
+```bash
+npm test               # 105 条测试（自带 runner：node --test 在沙箱内 worker 会 EPERM）
 npm run check          # 所有模块 node --check
-npm test               # 97 条测试
-npm run check:package  # npm pack 产物门禁：必备文件 / 禁入文件 / 体积
-npm version             # 校验 package.json 的版本在 README 与 CHANGELOG 里都有记录
-npm publish --provenance --access public
-git tag v<version> && git push --tags
+npm run check:package  # 打包门禁：必备/禁入文件、体积
+npm run version        # 校验版本号在 README 与 CHANGELOG 都有记录
 ```
 
-发布前还要做：把实测的宿主版本补进 `dsh.compatibility.dshReleases`；确认 `repository` / `homepage` 与真实仓库一致；在 `awesome-dsh-plugin.com/plugins.json` 与 `dsh-plugin-catalog` 两个市场登记。回滚步骤见 [docs/rollback.md](docs/rollback.md)。
+目录：
 
-## 版本
+```
+lib/            插件后端（入口、manager、relay、discovery、patcher、routes、store、bots、patches、reconcile、probe、ports）
+client/         设置页 bundle（无构建，纯 ESM + h()）
+patches/        声明式兼容补丁定义
+docs/           安装、兼容矩阵、回滚
+preview/        离线渲染 harness 与明暗截图
+test/           14 个套件，105 条用例
+scripts/        发布门禁
+```
 
-0.1.0 — 首个可用版本：发现、探测、逐目标端口、带备份的配置改写与回滚、设置页。
-0.2.0 — 正确性修复：路由持久化（重启自动重建）、回滚卸载监听、写入同源鉴权、失败不改配置。
-0.2.1 — 单实例化：路由移入插件状态、配置里只留 id 覆盖、代理不被清空、同端口幂等、按项撤销。
-0.2.2 — 加固：状态版本化、单事务落盘、回滚防覆盖、探测收敛、连接复用、TLS 超时、应用即验证。
-0.2.3 — 修复桌面版设置页被 403 挡住，应用/回滚恢复可用。
-0.2.4 — 放宽自检预算（12s/2 次重试）并显示真实失败原因。
-0.3.0 — 可观测与开关：实时指标、真实测试、HTTP 层探活、预检 diff、端口批量检查、连接参数可调、中英双语。
-0.4.0 — 声明式兼容补丁：锚点唯一性校验、原文件备份、启动时按账本自修复。
-0.4.1 — 单实例守卫、重复审计行合并、退出时落盘指标、设置页改用 DSH 设计 token 跟随主题。
-0.4.2 — 修正设计 token 名称与取值（明暗主题下按钮/输入框文字均可读），补真实明暗两套界面截图。
-0.4.3 — 端口一键检索：新增「找端口」与 `?op=suggest`，应用/预检自动补端口，`port_in_use` 自动换端口。
-0.4.4 — 每行代理选择器：直连 / clash 可选，选项来自 `config.proxies`，显式直连会清空代理。
+## 版本历史
 
-## 0.4.0 兼容补丁
+| 版本 | 主题 |
+| --- | --- |
+| 0.1.0 | 首个可用版本：发现、探测、逐目标端口、带备份的改写与回滚 |
+| 0.2.0 | 路由持久化、回滚卸监听、写入鉴权、失败不改配置 |
+| 0.2.1 | 单实例化：路由移入状态、同端口幂等、按项撤销 |
+| 0.2.2 | 加固：状态版本化、单事务落盘、探测收敛、连接复用、应用即验证 |
+| 0.2.3 | 修复桌面版 `dsh-app://app` 页面被 403 挡住 |
+| 0.2.4 | 自检放宽到 12s × 3 次，失败显示真实原因 |
+| 0.3.0 | 指标、真实测试、HTTP 层探活、预检、端口批量检查、参数可调、双语 |
+| 0.4.0 | 声明式兼容补丁（唯一锚点、备份、启动自修复） |
+| 0.4.1 | 单实例守卫、审计去重、退出落盘、界面改用 DSH 设计 token |
+| 0.4.2 | 修正 token 名称与取值，明暗主题可读 |
+| 0.4.3 | 「找端口」与 `?op=suggest`，应用自动补端口 |
+| 0.4.4 | 每行代理选择器（直连 / clash） |
+| 0.5.0 | 机器人代理接管（补丁 + 环境变量 + 状态） |
+| 0.5.1 | 配置自愈：检测并修复 `baseURL` 指向旧端口 |
+| 0.5.2 | 热重载接管：新实例先拆旧实例，修复 404 空体 |
+| 0.5.3 | 应用/回滚后同时刷新状态与发现列表 |
+| 0.5.4 | 回环恢复：撤销后重应用取回真实端点 |
+| 0.5.5 | 监视器读实时路由 + 熔断，已删路由不再写回 |
+| 0.5.6 | 内置端点兜底（openrouter / gemini / moonshot / deepseek） |
+| 0.6.0 | 舒适度：`.env` 持久化、空响应可读、原始地址可补、暂停可见 |
+| 0.7.0 | 发布准备：契约探测、API 快照、门禁、CI、发布/回滚文档 |
+| 0.7.1 | 跨平台：profile 根目录上溯、记录运行环境、契约降级提示、平台测试、README 重写 |
 
-有些插件把外连地址写死在代码里（例如 `dsh-im` 的 Telegram 传输只从进程环境变量取代理），
-只改配置无法让它走代理。0.4.0 把这类修改变成声明式补丁：
+完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
-- 补丁定义在 `patches/definitions.json`，声明包名、支持的版本前缀、文件、锚点与替换文本。
-- 应用时要求锚点在文件里**恰好出现一次**，替换是原子的，原始文件备份在
-  `storages/egress-router/patches/<id>.bak`。
-- 重装或升级把补丁冲掉后，下次启动会按状态里的账本自动修复（只修复你自己应用过的补丁）。
-- 设置页「兼容补丁」可以应用、复原、重新检查；由 `pnpm patch` 提供的补丁会显示为只读。
+## 许可
+
+MIT

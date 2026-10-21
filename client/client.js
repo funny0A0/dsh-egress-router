@@ -107,6 +107,7 @@ window.__ModuleLoader__.load({
       maxSockets: '并发',
       timeoutMs: '超时(ms)',
       driftWarning: '配置文件与运行中的监听不一致：{detail}',
+      contractDegraded: '当前宿主没有接受任何已知的接口注册形状：设置页暂时读不到后端，但路由与中转仍在运行。',
       repairConfig: '修复配置',
       repairDone: '已修复 {n} 项：{detail}',
       repairNone: '配置与监听一致，无需修复',
@@ -222,6 +223,7 @@ window.__ModuleLoader__.load({
       maxSockets: 'sockets',
       timeoutMs: 'timeout(ms)',
       driftWarning: 'The config file disagrees with the running listeners: {detail}',
+      contractDegraded: 'This host accepted none of the known API registration shapes: the page cannot reach the backend, but routing and relays keep running.',
       repairConfig: 'Repair config',
       repairDone: 'Repaired {n} provider(s): {detail}',
       repairNone: 'Config and listeners already agree',
@@ -523,6 +525,14 @@ window.__ModuleLoader__.load({
       function driftItems() {
         var info = data && data.drift
         return info && info.drift ? info.drift : []
+      }
+
+      function contractNotice() {
+        var contract = data && (data.contract || data.hostContract)
+        if (!contract || contract.ok !== false) return null
+        return h('div', {
+          style: Object.assign({}, box, hint, { padding: '8px 12px', borderColor: 'var(--dsw-alias-state-error-primary, #f85149)' }),
+        }, '⛔ ' + t('contractDegraded') + (contract.detail ? ' — ' + contract.detail : ''))
       }
 
       function repairConfig() {
@@ -933,6 +943,7 @@ window.__ModuleLoader__.load({
             style: Object.assign({}, box, hint, { padding: '8px 12px', borderColor: 'var(--dsw-alias-state-warn-primary, #d29922)' }),
           }, '⚠ ' + warn.message)
         }),
+        contractNotice(),
         driftItems().length
           ? h('div', {
               style: Object.assign({}, box, hint, { padding: '8px 12px', borderColor: 'var(--dsw-alias-state-warn-primary, #d29922)' }),

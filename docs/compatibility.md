@@ -2,15 +2,34 @@
 
 ## 支持矩阵
 
-| 宿主版本 | 状态 | 说明 |
-| --- | --- | --- |
-| 0.2.1-rc.2 | compatible | 已验证：监听、配置改写、回滚、补丁、机器人、指标、设置页 |
-| 0.2.0-rc.2 | unknown | 未实测。早期开发机装的是这一版，但 0.2.x 之后才加入 0.4.x 的补丁机制 |
-| 0.3.x 及以后 | unknown | 未实测。宿主每次 rc 升级都可能改插件契约，请按下面的清单复核 |
+| 宿主版本 | 平台 | 状态 | 说明 |
+| --- | --- | --- | --- |
+| 0.2.1-rc.2 | Windows 11 / Node 24 | compatible | 实测：监听、配置改写、回滚、补丁、机器人、指标、设置页 |
+| 0.2.1-rc.2 | Linux | CI only | 语法、105 条测试与打包门禁在 ubuntu-latest 上跑；未做真机桌面联调 |
+| 0.2.0-rc.2 | Windows / Linux | unknown | 未实测。早期开发机装的是这一版，但 0.2.x 之后才加入 0.4.x 的补丁机制 |
+| 0.3.x 及以后 | Windows / Linux | unknown | 未实测。宿主每次 rc 升级都可能改插件契约，请按下面的清单复核 |
 
 `package.json` 的 `dsh.compatibility.dsh` 是 **区间**，`dshReleases` 只记录**已实测**的版本。
 宿主换版本时，`dshReleases` 里没有的版本按 unknown 对待——不假装兼容。
 
+## 平台与运行环境
+
+同一份代码在 Windows 与 Linux 上运行，差异集中在三处，且都有测试固定：
+
+| 差异 | 处理 | 测试 |
+| --- | --- | --- |
+| 安装布局（hoisted vs pnpm `.pnpm/<pkg>@<ver>`） | `findProfileRoot()` 从插件目录向上找「含 `cordis.patch.yml` 或 `dsh.profile` 的目录」，不数 `..` | `test/host-contract.test.mjs` |
+| Windows 文件名禁用字符 | 备份文件名把 `:`、`.` 换成 `-` | `test/platform.test.mjs` |
+| 换行 | 状态文件与受管 `.env` 一律 LF；`.env` 值里不会混入 `\r` | `test/platform.test.mjs` |
+
+运行环境会随契约一起写进状态：
+
+```json
+"hostContract": { "webServer": "exact", "ok": true, "at": "2026-10-21T12:00:00.000Z" },
+"hostEnv": { "platform": "win32", "arch": "x64", "node": "v24.15.0", "at": "2026-10-21T12:00:00.000Z" }
+```
+
+报兼容性问题时请附这两个字段——它们说明「在什么宿主、什么平台上，哪一种注册形状被接受」。
 ## 本插件依赖的宿主契约
 
 1. `hostCtx.webServer.register({ kind: 'exact', path, handler })` —— 注册设置页用的 HTTP 端点。

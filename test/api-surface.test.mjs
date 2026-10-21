@@ -16,6 +16,7 @@ const STATE_KEYS = [
   'discovered',
   'discoveredAt',
   'drift',
+  'hostEnv',
   'history',
   'listeners',
   'metrics',

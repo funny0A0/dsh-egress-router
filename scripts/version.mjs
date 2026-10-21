@@ -13,7 +13,8 @@ if (args[0] === '--set' && args[1]) {
 const readme = fs.readFileSync('README.md', 'utf8')
 const changelog = fs.readFileSync('CHANGELOG.md', 'utf8')
 const problems = []
-if (!readme.includes(pkg.version + ' —')) problems.push('README.md has no "' + pkg.version + ' —" version line')
+const mentioned = readme.includes(pkg.version + ' —') || readme.includes('| ' + pkg.version + ' |')
+if (!mentioned) problems.push('README.md does not mention ' + pkg.version + ' (version list or history table)')
 if (!changelog.includes('## ' + pkg.version)) problems.push('CHANGELOG.md has no "## ' + pkg.version + '" section')
 console.log('version ' + pkg.version + (problems.length ? '' : ' — documented'))
 for (const problem of problems) console.error('  ' + problem)

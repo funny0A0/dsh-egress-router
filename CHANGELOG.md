@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.1
+
+跨平台与可读性：装得上、看得懂、坏了能定位。
+
+- **profile 根目录上溯**：`findProfileRoot()` 从插件目录向上找「含 `cordis.patch.yml` 或 `dsh.profile`」的目录，替代数 `..` 的写法——hoisted 与 pnpm `.pnpm/<pkg>@<ver>` 两种布局、Windows 与 Linux 都能定位。
+- **运行环境入库**：契约探测同时记录 `hostEnv`（platform / arch / node），报兼容性问题时不再靠猜。
+- **契约降级可见**：宿主不接受任何注册形状时，设置页顶部显示红条与原因（中英双语），而不是静默 404。
+- **安装文档**：新增 `docs/install.md`（前置条件、Windows / Linux 安装、自检、升级、卸载、安装期故障表）。
+- **兼容矩阵补平台维度**：Windows 实测、Linux CI only，并写清三处平台差异（布局 / 文件名 / 换行）。
+- **测试 105 条**：新增 `test/host-contract.test.mjs`（4 条：上溯定位、plain、positional、全不接受时降级）与 `test/platform.test.mjs`（3 条：备份文件名合法、状态文件 LF、受管 `.env` LF 且不重复）。
+- **README 重写**：从按版本堆叠的变更记录改为可读文档（为什么、做什么、原理、安装、上手、界面、配置、API、故障排查、兼容、安全、限制、开发、版本表），中英两份同步。
+
 ## 0.7.0
 
 发布准备：让「换一个宿主版本还敢不敢装」有可执行的答案。
