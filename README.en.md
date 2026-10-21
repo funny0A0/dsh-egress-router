@@ -83,7 +83,7 @@ provider baseURL -> http://127.0.0.1:8792/... -> RelayManager (http.Server on 12
                 -> CONNECT tunnel -> upstream proxy (optional, e.g. clash) -> target
 ```
 
-Routes live in `$DSH_HOME/storages/egress-router/state.json` (`version: 8`,
+Routes live in `$DSH_HOME/storages/egress-router/state.json` (`version: 9`,
 `schemaVersion: 1`), not in `cordis.patch.yml`; the config only carries `proxies`.
 
 ## API
@@ -92,7 +92,9 @@ Routes live in `$DSH_HOME/storages/egress-router/state.json` (`version: 8`,
 
 | op | method | purpose |
 | --- | --- | --- |
-| `state` | GET | everything the page needs (19 keys, locked by `test/api-surface.test.mjs`) |
+| `state` | GET | everything the page needs (24 keys, `apiVersion: 1`, locked by `test/api-surface.test.mjs`) |
+| `diagnose` | GET | redacted snapshot for bug reports (proxy userinfo, bot URLs and backup paths are stripped) |
+| `upstream` | POST | per-route TLS reachability through that route's own proxy (6s) |
 | `discover` | GET | rescan targets |
 | `probe` | POST | reachability; only discovered targets, private addresses refused |
 | `plan` | POST | diff / port / warnings, writes nothing |

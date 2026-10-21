@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.9.0
+
+这一版解决三个「看不见」：重启就归零的流量、只能远程排查的现场、以及代理挂掉时要等应用失败才发现的上游。
+
+### 指标跨重启累计（v9）
+
+- `state.json` 升到 `version: 9`，新增 `metricsTotals`：按路由累计 `requests / bytesIn / bytesOut / errors`，并保留首次计数时间 `since`。
+- 监听计数本来随 relay 重建归零，所以每分钟（以及退出时）把**增量**折进总量；`diffMetrics` 是纯函数，计数变小时视为「新一轮基線」而不是负增量，watchdog 重建不会吃掉已计总量。
+- `?op=state` 的 `metrics[<id>].totals` 与顶层 `metricsTotals` 同时可用；设置页指标行追加「累计 N 次」。
+
+### 诊断包 `?op=diagnose`
+
+- 一键导出一个可直接发给别人的 JSON：版本、profile 是否识别正确、宿主契约、路由与监听、指标、漂移、暂停、补丁、机器人、最近 20 条审计、`lastError`。
+- 服务端负责脱敏：代理 URL 的 userinfo 变成 `***`，机器人行只给 `envVar` 与 `configured`（不再带 `url`），备份路径只留文件名，历史截断到 20 条。设置页「诊断」按钮直接下载 `egress-router-diagnose-<时间>.json`。
+
+### 自定义端点 `config.targets`
+
+```yaml
+- id: egress-router
+  config:
+    proxies:
+      clash: http://127.0.0.1:7897
+    targets:
+      - { id: github, name: GitHub API, host: api.github.com, port: 443 }
+```
+
+- 这些端点会出现在「发现到的外连目标」里（徽章「自定义」），可以被 `?op=probe`、`?op=upstream` 检查，但**不可改写**（没有 provider 块，`apply` 返回 `not_patchable`）。
+- `host` + `port`、`target: "host:port"`、`url` 三种写法都接受。
+
+### 上游健康 `?op=upstream`
+
+- 对每条活动路由，用该路由自己的代理做一次 TLS 探活（6s 超时），返回 `{ ok, results: [{ id, target, proxy, via, ok, ms, error }] }`。
+- 设置页「上游」按钮：全通则提示「上游可达」，否则列出失败路由与错误。需要写意图（`POST` + JSON），避免被随便一个网页触发。
+
+### 其他
+
+- `?op=state` / `?op=diagnose` 增加 `apiVersion: 1`，键数 21 → 24（`+apiVersion`、`+metricsTotals`、`+metrics[*].totals`），`test/api-surface.test.mjs` 同步。
+- 新套件 `test/insight.test.mjs`（7 条）：总量累加与 `since`、重复 flush 不重复计数、计数回退、custom 行与 probe、诊断脱敏、upstream 形状与写意图。
+- 测试 75 → 82 条 + API 快照。
 ## 0.8.0
 
 把「坏了但没人知道」的四处补上，并让设置页在宿主变化时不再静默消失。
@@ -339,3 +378,4 @@
 - 状态版本 6：新增 `patches` 账本；旧状态自动升级。
 - 重装/升级把补丁冲掉时，下次启动自动修复并写一条 `patch-repair` 历史。
 - 测试：新增 `test/patches.test.mjs`（12 条），全套 64 条通过。
+

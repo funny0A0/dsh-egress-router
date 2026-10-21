@@ -114,16 +114,16 @@ Invoke-RestMethod "http://127.0.0.1:8792/__health"
 
 ## 设置页说明
 
-**顶部**：`扫描`（重新发现）、`端口检查`（批量看占用）、`回滚上次改动`（最近一次应用的逆操作）。
+**顶部**：`扫描`（重新发现）、`端口检查`（批量看占用）、`上游`（逐路由探一次代理链路）、`诊断`（下载脱敏现场 JSON）、`回滚上次改动`（最近一次应用的逆操作）。
 
 **每一行**
 
 | 元素 | 含义 |
 | --- | --- |
-| `模型` / `消息` / `外连` | 目标类型；`外连` 表示从配置里扫到但无法判定用途（标「待确认」） |
+| `模型` / `消息` / `外连` / `自定义` | 目标类型；`外连` 表示从配置里扫到但无法判定用途（标「待确认」）；`自定义` 来自 `config.targets`，只可检查、不可改写 |
 | `已路由` | 这个目标当前指向本机中转 |
 | `运行中 :8792` / `未运行` | 监听是否真的起来了 |
-| `42 次 · ↑14.9KB ↓86.1KB · p50 231.4ms · 5xx 1` | 该端口累计指标；`尚未有流量` 表示还没请求过 |
+| `42 次 · ↑14.9KB ↓86.1KB · p50 231.4ms · 5xx 1 · 累计 1.2k 次` | 本次监听的指标 + 跨重启累计（`metricsTotals`）；`暂无流量` 表示还没请求过 |
 | `经 clash` / `直连` | 该行选中的上游 |
 | `检查` `预检` `找端口` `应用` `测试` `撤销` | 探活、看 diff、取空闲端口、落盘生效、经中转发一次真实请求、按项回滚 |
 
@@ -143,17 +143,35 @@ Invoke-RestMethod "http://127.0.0.1:8792/__health"
       clash: http://127.0.0.1:7897
 ```
 
+### `config.targets`：声明要观察的端点
+
+有些域名不在任何 provider 的 `baseURL` 里（自建服务、上游 API、暂时未接入的模型供应商），但你仍想一键检查。把它们写进 `targets`：
+
+```yaml
+- id: egress-router
+  config:
+    proxies:
+      clash: http://127.0.0.1:7897
+    targets:
+      - { id: github, name: GitHub API, host: api.github.com, port: 443 }
+      - { id: hf, target: huggingface.co:443 }
+      - { id: ghcr, url: https://ghcr.io/v2/ }
+```
+
+三种写法等价（`host` + `port` / `target: "host:port"` / `url`）。它们会以「自定义」徽章出现在扫描结果里，可以 `检查` 与 `测试`，但 `apply` 会返回 `not_patchable`：没有可改写的 `baseURL`。
+
 > 不要写 `name: dsh-egress-router`：`bundles` 已经加载了本插件，再写 `name` 会被当成第二个实例。
 
 ### `$DSH_HOME/storages/egress-router/state.json`
 
-`version: 8`、`schemaVersion: 1`。主要字段：
+`version: 9`、`schemaVersion: 1`。主要字段：
 
 | 字段 | 说明 |
 | --- | --- |
 | `routes[]` | `{ id, target, listenPort, proxy, tls, tuning, originBaseURL }` |
 | `listeners[]` | 最近一次同步结果（`ok` / `error`），重启后可见 |
 | `metrics{}` | 每个路由的计数与延迟分位（样本在内存，重启从零累计） |
+| `metricsTotals{}` | 跨重启累计的 `requests / bytesIn / bytesOut / errors` 与首次计数时间 `since` |
 | `backups[]` | 配置备份账本（最多 20 条），回滚依据 |
 | `patches{}` | 补丁账本（自修复只处理这里记录过的） |
 | `bots{}` | 机器人 → 代理映射（启动时注入进程环境变量） |
@@ -190,9 +208,11 @@ export DSH_TELEGRAM_PROXY=http://127.0.0.1:7897
 
 | op | 方法 | 说明 |
 | --- | --- | --- |
-| `state` | GET | 页面所需的全部状态（19 个键，见 `test/api-surface.test.mjs`） |
+| `state` | GET | 页面所需的全部状态（24 个键，含 `apiVersion: 1`，见 `test/api-surface.test.mjs`） |
+| `diagnose` | GET | 脱敏现场包（代理 userinfo、机器人地址、备份路径都已处理） |
+| `upstream` | POST | 逐路由探一次上游链路（用该路由自己的代理，6s 超时） |
 | `discover` | GET | 重新扫描目标并缓存 |
-| `probe` | POST | 探活；只接受已扫描到的目标，拒绝私有地址 |
+| `probe` | POST | 探活；接受已扫描到的目标与 `config.targets`，拒绝私有地址 |
 | `plan` | POST | 只算 diff / 端口 / 警告，不写文件 |
 | `ports` | GET | `?op=ports&port=8791&port=8792` 批量查占用 |
 | `suggest` | POST | 取一个空闲端口（跳过本插件已占用的） |
@@ -301,6 +321,7 @@ scripts/        发布门禁
 | 0.7.1 | 跨平台：profile 根目录上溯、记录运行环境、契约降级提示、平台测试、README 重写 |
 | 0.7.3 | 修 profile 目录识别：扫描不再永远为空、补丁状态不再误报未安装，`state` 增加 `profileOk` |
 | 0.8.0 | 可靠性：监听自愈（指数退避）、失败统一落盘 `lastError`、刷新序号/取消/去抖、写操作互斥与无障碍标注、熔断改十分钟滑窗并逐级延长 |
+| 0.9.0 | 可观测：指标跨重启累计（`state` v9）、脱敏诊断包、`config.targets` 自定义端点、上游健康体检、`apiVersion` |
 
 完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 

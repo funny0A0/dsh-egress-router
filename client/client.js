@@ -103,6 +103,13 @@ __loader.load({
       kindIm: '消息',
       kindGuarded: '受保护',
       kindOther: '外连',
+      kindCustom: '自定义',
+      trafficTotal: '累计 {n} 次',
+      upstream: '上游',
+      upstreamOk: '上游可达：{n} 条路由全部连通',
+      upstreamFail: '上游异常：{n} 条失败（{detail}）',
+      diagnose: '诊断',
+      diagnoseDone: '诊断包已下载：{name}',
       lowConfidence: '待确认',
       routed: '已路由',
     staleRoute: '中转已撤销',
@@ -220,6 +227,13 @@ __loader.load({
       kindIm: 'messaging',
       kindGuarded: 'guarded',
       kindOther: 'outbound',
+      kindCustom: 'custom',
+      trafficTotal: '{n} total',
+      upstream: 'Upstream',
+      upstreamOk: 'Upstream reachable: all {n} routes connect',
+      upstreamFail: 'Upstream problem: {n} failed ({detail})',
+      diagnose: 'Diagnose',
+      diagnoseDone: 'Diagnostics downloaded: {name}',
       lowConfidence: 'unconfirmed',
       routed: 'routed',
     staleRoute: 'relay removed',
@@ -479,6 +493,7 @@ __loader.load({
       if (kind === 'llm') return t('kindLlm')
       if (kind === 'im') return t('kindIm')
       if (kind === 'guarded') return t('kindGuarded')
+      if (kind === 'custom') return t('kindCustom')
       return t('kindOther')
     }
 
@@ -613,6 +628,54 @@ __loader.load({
             verdict: result.verdict,
           }))
         }).catch(function (err) { setMessage(t('checkFailed') + err.message) })
+      }
+
+
+      function checkUpstream() {
+        setBusy('upstream')
+        setMessage(t('upstream') + '…')
+        callRaw('POST', BASE + '?op=upstream', {})
+          .then(function (result) {
+            var rows = result.results || []
+            if (result.ok) {
+              setMessage(t('upstreamOk', { n: rows.length }))
+            } else {
+              var failed = rows.filter(function (item) { return !item.ok })
+              setMessage(t('upstreamFail', {
+                n: failed.length,
+                detail: failed.map(function (item) { return item.id + ': ' + (item.error || t('failed')) }).join('; '),
+              }))
+            }
+          })
+          .catch(function (err) { setMessage(t('checkFailed') + err.message) })
+          .then(function () { setBusy(null); refreshSoon() })
+      }
+
+      // Hand the user a file instead of asking them to read a port number into a chat:
+      // the payload is redacted server-side (no credentials, no proxy userinfo).
+      function downloadDiagnose() {
+        setBusy('diagnose')
+        call('diagnose')
+          .then(function (payload) {
+            var stamp = new Date().toISOString().replace(/[:.]/g, '-')
+            var name = 'egress-router-diagnose-' + stamp + '.json'
+            try {
+              var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+              var url = URL.createObjectURL(blob)
+              var link = document.createElement('a')
+              link.href = url
+              link.download = name
+              document.body.appendChild(link)
+              link.click()
+              document.body.removeChild(link)
+              setTimeout(function () { URL.revokeObjectURL(url) }, 2000)
+              setMessage(t('diagnoseDone', { name: name }))
+            } catch (err) {
+              setMessage(t('failed') + (err && err.message ? err.message : String(err)))
+            }
+          })
+          .catch(function (err) { setMessage(t('checkFailed') + err.message) })
+          .then(function () { setBusy(null) })
       }
 
       function checkPorts() {
@@ -873,6 +936,9 @@ __loader.load({
         } else if (item.routed) {
           parts.push(t('noTraffic'))
         }
+        // 0.9.0: the live counters reset with the listener, the totals do not.
+        var totals = live && live.totals
+        if (totals && totals.requests) parts.push(t('trafficTotal', { n: totals.requests }))
         if (item.routed) parts.push(item.proxy ? t('viaProxy', { proxy: item.proxy }) : t('noProxy'))
         if (!parts.length) return null
         return h('div', { style: Object.assign({}, mono, { fontSize: 11 }) }, parts.join(' · '))
@@ -990,6 +1056,8 @@ __loader.load({
             h('div', { style: actions },
               h('button', { style: btn, disabled: anyBusy, onClick: scan }, t('scan')),
               h('button', { style: btn, disabled: anyBusy, onClick: checkPorts }, t('portCheck')),
+              h('button', { style: btn, disabled: anyBusy, onClick: checkUpstream }, t('upstream')),
+              h('button', { style: btn, disabled: anyBusy, onClick: downloadDiagnose }, t('diagnose')),
               h('button', { style: btn, disabled: anyBusy, onClick: function () { rollback(null) } }, t('rollbackLast'))
             )
           )),

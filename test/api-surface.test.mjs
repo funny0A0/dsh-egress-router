@@ -9,6 +9,7 @@ import { RelayManager } from '../lib/manager.js'
 import { makeHandler } from '../lib/routes.js'
 
 const STATE_KEYS = [
+  'apiVersion',
   'backups',
   'bots',
   'config',
@@ -22,6 +23,7 @@ const STATE_KEYS = [
   'clientContract',
   'listeners',
   'metrics',
+  'metricsTotals',
   'patches',
   'paused',
   'profileDir',
@@ -74,6 +76,8 @@ try {
   const state = await call(booted.base, 'state')
   assert.equal(state.status, 200)
   assert.deepEqual(Object.keys(state.data).sort(), STATE_KEYS)
+  assert.equal(state.data.apiVersion, 1)
+  assert.deepEqual(state.data.metricsTotals, {})
   assert.equal(typeof state.data.schemaVersion, 'number')
   assert.equal(Array.isArray(state.data.paused), true)
   assert.equal(Array.isArray(state.data.routes), true)
