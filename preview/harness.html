@@ -228,6 +228,9 @@
     return Promise.resolve({
       ok: true,
       status: 200,
+      // The real client reads the body as text and parses it itself (0.6.0), so the mock has
+      // to offer both shapes — a json()-only mock hides exactly the path being tested.
+      text: function () { return Promise.resolve(JSON.stringify(body)) },
       json: function () { return Promise.resolve(body) },
     })
   }
