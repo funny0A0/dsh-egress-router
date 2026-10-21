@@ -1,0 +1,281 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<title>egress-router UI harness</title>
+<style>
+  /* Real DSH theme values, copied from the alias blocks in D:\dsh\resources\app.asar.
+     Light is the :root default; the dark block flips the same token names, exactly as the
+     host does, so a screenshot here shows what the panel will look like in either theme. */
+  :root {
+    --dsw-alias-bg-base: #ffffff;
+    --dsw-alias-bg-layer-1: #ffffff;
+    --dsw-alias-bg-layer-2: #ffffff;
+    --dsw-alias-button-elevated-fill: #ffffff;
+    --dsw-alias-border-l1: #0000000a;
+    --dsw-alias-border-l2: #0000001a;
+    --dsw-alias-border-l3: #0000001f;
+    --dsw-alias-border-l4: #00000029;
+    --dsw-alias-label-primary: #0f1115;
+    --dsw-alias-label-secondary: #61666b;
+    --dsw-alias-label-tertiary: #81858c;
+    --dsw-alias-label-primary-foreground: #ffffff;
+    --dsw-alias-button-primary-fill: #0f1115;
+    --dsw-alias-link: #4176e6;
+    --dsw-alias-state-success-primary: #22c55e;
+    --dsw-alias-state-warn-primary: #f59e0b;
+    --dsw-alias-state-error-primary: #ec1313;
+    --dsw-radius-xs: 4px;
+    --dsw-radius-sm: 8px;
+    --dsw-radius-md: 12px;
+    --dsw-radius-lg: 16px;
+    color-scheme: light;
+  }
+  html[data-theme="dark"] {
+    --dsw-alias-bg-base: #151517;
+    --dsw-alias-bg-layer-1: #232324;
+    --dsw-alias-bg-layer-2: #2c2c2e;
+    --dsw-alias-button-elevated-fill: #43454a;
+    --dsw-alias-border-l1: #ffffff0f;
+    --dsw-alias-border-l2: #ffffff1f;
+    --dsw-alias-border-l3: #ffffff29;
+    --dsw-alias-border-l4: #ffffff33;
+    --dsw-alias-label-primary: #f9fafb;
+    --dsw-alias-label-secondary: #cfd3d6;
+    --dsw-alias-label-tertiary: #adb2b8;
+    --dsw-alias-label-primary-foreground: #0f1115;
+    --dsw-alias-button-primary-fill: #f9fafb;
+    --dsw-alias-link: #4176e6;
+    --dsw-alias-state-success-primary: #22c55e;
+    --dsw-alias-state-warn-primary: #f59e0b;
+    --dsw-alias-state-error-primary: #f25a5a;
+    color-scheme: dark;
+  }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--dsw-alias-bg-base);
+    color: var(--dsw-alias-label-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+  }
+  #panel { width: 360px; }
+</style>
+<script>document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme') || 'dark'</script></head>
+<body>
+<div id="panel"></div>
+<pre id="log" style="margin-top:12px;color:#ff8a80;font-family:monospace;font-size:12px;white-space:pre-wrap"></pre>
+<script>
+(function () {
+  var root = document.getElementById('panel')
+  var logEl = document.getElementById('log')
+  logEl.textContent = 'boot\n'
+  window.onerror = function (message, source, line, column) {
+    logEl.textContent += 'ERR ' + message + ' @' + line + ':' + column + '\n'
+  }
+
+  // Minimal React replacement: element objects + two hooks, full re-render each pass.
+  var React = {
+    createElement: function (type) {
+      var props = arguments[1] || {}
+      var kids = [].slice.call(arguments, 2).flat(Infinity)
+      return { type: type, props: props, kids: kids }
+    },
+  }
+  var hookIndex = 0
+  var cells = {}
+  var depCells = {}
+  var pending = []
+  React.useState = function (init) {
+    var i = hookIndex++
+    if (!(i in cells)) cells[i] = typeof init === 'function' ? init() : init
+    return [cells[i], function (next) {
+      cells[i] = typeof next === 'function' ? next(cells[i]) : next
+      schedule()
+    }]
+  }
+  React.useEffect = function (fn, list) {
+    var i = hookIndex++
+    var prev = depCells[i]
+    var changed = !prev || !list || list.some(function (value, k) { return value !== prev[k] })
+    if (changed) { depCells[i] = list; pending.push(fn) }
+  }
+
+  function toDom(node) {
+    if (node === null || node === undefined || node === false || node === true) return document.createDocumentFragment()
+    if (Array.isArray(node)) {
+      var frag = document.createDocumentFragment()
+      node.forEach(function (child) { frag.appendChild(toDom(child)) })
+      return frag
+    }
+    if (typeof node === 'string' || typeof node === 'number') return document.createTextNode(String(node))
+    var el = document.createElement(node.type)
+    var props = node.props || {}
+    if (props.style) {
+      // React appends "px" to bare numbers except for unitless properties; the DOM does
+      // not, so mimic that or a width: 88 silently becomes invalid and the input stretches.
+      var UNITLESS = { flex: 1, flexGrow: 1, flexShrink: 1, fontWeight: 1, lineHeight: 1, opacity: 1, zIndex: 1, order: 1 }
+      Object.keys(props.style).forEach(function (key) {
+        var value = props.style[key]
+        if (typeof value === 'number' && !UNITLESS[key]) value = value + 'px'
+        el.style[key] = value
+      })
+    }
+    if (props.className) el.className = props.className
+    if (props.placeholder !== undefined) el.placeholder = props.placeholder
+    if (props.value !== undefined) el.value = props.value
+    if (props.title !== undefined) el.title = props.title
+    if (props.onClick) el.addEventListener('click', props.onClick)
+    if (props.onChange) el.addEventListener('change', props.onChange)
+    node.kids.forEach(function (child) { el.appendChild(toDom(child)) })
+    // A controlled <select> only keeps its value once its options exist; React does the
+    // same after mounting, the DOM does not (it silently falls back to the first option).
+    if (el.tagName === 'SELECT' && props.value !== undefined) el.value = String(props.value)
+    return el
+  }
+
+  var Component = null
+  var scheduled = false
+  function schedule() {
+    if (scheduled) return
+    scheduled = true
+    setTimeout(function () { scheduled = false; render() }, 0)
+  }
+  function render() {
+    if (!Component) return
+    hookIndex = 0
+    pending = []
+    var tree = Component()
+    root.replaceChildren(toDom(tree))
+    var run = pending
+    pending = []
+    run.forEach(function (fn) { try { fn() } catch (err) { console.error('[harness] effect failed', err) } })
+  }
+
+  var state = {
+    ok: true,
+    config: { proxies: { clash: 'http://127.0.0.1:7897' }, listenHost: '127.0.0.1' },
+    profileDir: 'C:\\Users\\86139\\.dsh\\profiles\\desktop',
+    routes: [{ id: 'llm:gemini', target: 'generativelanguage.googleapis.com:443', listenPort: 8792, proxy: 'clash', tls: true, maxSockets: 6 }],
+    status: [{ id: 'llm:gemini', host: '127.0.0.1', port: 8792, target: 'generativelanguage.googleapis.com:443', ok: true, error: null }],
+    listeners: [{ id: 'llm:gemini', host: '127.0.0.1', port: 8792, ok: true, error: null }],
+    metrics: {
+      'llm:gemini': {
+        requests: 42, bytesIn: 15230, bytesOut: 88211, errors: 1,
+        statuses: { 200: 41, 502: 1 }, ttfbP50: 231.4, ttfbP95: 812.7, samples: 42,
+        startedAt: '2026-10-21T03:12:44.000Z', lastAt: '2026-10-21T04:58:02.000Z',
+      },
+    },
+    tuning: { maxSockets: 6, timeoutMs: 90000, connectTimeoutMs: 12000 },
+    backups: 2,
+    discoveredAt: '2026-10-21T04:57:31.000Z',
+    discovered: {
+      warnings: [],
+      items: [
+        {
+          id: 'llm:gemini', kind: 'llm', name: 'Gemini 3.8 Flash', confidence: 'certain',
+          target: 'generativelanguage.googleapis.com:443',
+          baseURL: 'http://127.0.0.1:8792/v1beta/openai',
+          routed: true, listenPort: 8792, proxy: 'clash', patchable: true, guarded: false,
+        },
+        {
+          id: 'im:telegram', kind: 'im', name: 'Telegram', confidence: 'certain',
+          target: 'api.telegram.org:443', baseURL: 'https://api.telegram.org',
+          routed: false, patchable: false, guarded: false, bot: 'telegram',
+        },
+        {
+          id: 'cfg:status.example.com', kind: 'other', name: 'some-third-party-service.example.com', confidence: 'low',
+          target: 'some-third-party-service.example.com:443',
+          baseURL: 'https://some-third-party-service.example.com/v1/very/long/path/that/keeps/going/and/going?with=query',
+          routed: false, patchable: false, guarded: false,
+        },
+        {
+          id: 'guarded:platform.deepseek.com', kind: 'other', name: 'platform.deepseek.com', confidence: 'certain',
+          target: 'platform.deepseek.com:443', routed: false, patchable: false, guarded: true,
+        },
+      ],
+    },
+    history: [
+      { at: '2026-10-21T04:58:02.000Z', op: 'start', routeId: null, ok: true, detail: 'llm:gemini:8792' },
+      { at: '2026-10-21T04:57:55.000Z', op: 'apply', routeId: 'llm:gemini', ok: true, detail: 'surgical baseURL rewrite' },
+      { at: '2026-10-21T04:57:31.000Z', op: 'patch-verify', routeId: null, ok: true, detail: 'telegram-proxy@applied' },
+    ],
+    bots: [
+      {
+        id: 'telegram', title: 'Telegram 机器人', envVar: 'DSH_TELEGRAM_PROXY', patchId: 'telegram-proxy',
+        configured: true, proxy: 'clash', url: 'http://127.0.0.1:7897', envValue: 'http://127.0.0.1:7897',
+        patch: { id: 'telegram-proxy', status: 'applied', detail: 'marker present in lib/index.js', version: '5.1.0' },
+      },
+    ],
+    patches: [
+      {
+        id: 'telegram-proxy', title: 'Telegram 经本机代理', package: '@xmanrui/dsh-im', version: '5.1.0',
+        status: 'applied', detail: 'marker present in lib/index.js', backup: false, ledger: true,
+      },
+      {
+        id: 'example-http-proxy', title: '示例：强制走代理', package: 'some-plugin', version: '1.2.3',
+        status: 'pending', detail: 'anchor found once, ready to apply', backup: null, ledger: null,
+      },
+    ],
+  }
+
+  window.fetch = function (url) {
+    var body = state
+    if (String(url).indexOf('op=discover') !== -1) {
+      body = { items: state.discovered.items, warnings: [] }
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: function () { return Promise.resolve(body) },
+    })
+  }
+
+  window.__ModuleLoader__ = {
+    load: function (def) {
+      logEl.textContent += 'load() called\n'
+      var mod = { exports: {} }
+      try {
+        var exported = def.factory(function (id) {
+          if (id === 'react') return React
+          throw new Error('unexpected require: ' + id)
+        })
+        // The module factory returns module.exports rather than relying on the closure.
+        mod.exports = exported || mod.exports
+        logEl.textContent += 'factory ok; exports=' + Object.keys(mod.exports).join('|') + '\n'
+      } catch (err) {
+        logEl.textContent += 'factory ERR ' + err.message + '\n'
+        return
+      }
+      var ctx = {
+        slots: {
+          inject: function (name, fn) { logEl.textContent += 'inject ' + name + '\n'; fn() },
+          register: function (desc, component) {
+            Component = component || desc
+            logEl.textContent += 'register ' + (desc && desc.id) + ' component=' + typeof Component + '\n'
+          },
+        },
+      }
+      try {
+        if (mod.exports.apply) {
+          mod.exports.apply(ctx)
+          logEl.textContent += 'apply ok; component=' + typeof Component + '\n'
+        } else {
+          logEl.textContent += 'no exports.apply\n'
+        }
+      } catch (err) {
+        logEl.textContent += 'apply ERR ' + err.message + '\n'
+      }
+    },
+  }
+
+  var script = document.createElement('script')
+  script.src = '../client/client.js'
+  script.onload = function () { logEl.textContent += 'client loaded\n'; setTimeout(render, 60) }
+  script.onerror = function () { logEl.textContent += 'client.js failed to load\n' }
+  document.body.appendChild(script)
+})()
+</script>
+</body>
+</html>

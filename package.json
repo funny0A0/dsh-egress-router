@@ -1,0 +1,77 @@
+{
+  "name": "dsh-egress-router",
+  "version": "0.7.0",
+  "type": "module",
+  "description": "Per-endpoint loopback egress relay for DSH: route only the endpoints that need a proxy, keep everything else direct.",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client/client.js",
+    "./package.json": "./package.json"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "proxy",
+    "relay",
+    "egress"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    "manifestVersion": 1,
+    "compatibility": {
+      "dsh": ">=0.2.1-rc.2 <0.3.0",
+      "dshReleases": {
+        "0.2.1-rc.2": "compatible"
+      }
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "lib",
+    "client",
+    "cordis.patch.yml",
+    "patches",
+    "docs",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/run-all.mjs",
+    "check": "node scripts/check-syntax.mjs",
+    "check:package": "node scripts/check-package.mjs",
+    "version": "node scripts/version.mjs"
+  },
+  "author": "funny0A0 <jiaof108@google.com>",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bugs": {
+    "url": "https://github.com/funny0A0/dsh-egress-router/issues"
+  },
+  "homepage": "https://github.com/funny0A0/dsh-egress-router#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/funny0A0/dsh-egress-router.git"
+  }
+}

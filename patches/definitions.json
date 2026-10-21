@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "patches": [
+    {
+      "id": "telegram-proxy",
+      "title": "Telegram Bot API 经本地代理",
+      "titleEn": "Telegram Bot API through the local proxy",
+      "package": "@xmanrui/dsh-im",
+      "versions": ["5."],
+      "file": "lib/index.js",
+      "marker": "DSH_TELEGRAM_PROXY",
+      "find": "new Lze({connections:Uze})",
+      "replace": "new Lze({connections:Uze,httpProxy:process.env.DSH_TELEGRAM_PROXY||\"http://127.0.0.1:7897\",httpsProxy:process.env.DSH_TELEGRAM_PROXY||\"http://127.0.0.1:7897\",noProxy:\"\"})",
+      "note": "dsh-im 的 Telegram 传输只从进程 env 读代理；本补丁把代理地址直接绑到那一个 dispatcher，不影响其它插件。"
+    }
+  ]
+}

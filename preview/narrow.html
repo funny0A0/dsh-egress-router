@@ -1,0 +1,59 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;padding:12px;background:#1e1e1e;color:#ddd;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px}
+#panel{width:360px;border:1px dashed #666;padding:8px}
+</style></head><body>
+<div id="panel">
+  <div style="border:1px solid #3a3a3a;border-radius:8px;padding:12px;margin-bottom:12px;box-sizing:border-box;max-width:100%;min-width:0;overflow:visible">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;row-gap:6px;justify-content:space-between;align-items:center">
+      <strong style="min-width:0;overflow-wrap:anywhere">出口路由（Egress Router）</strong>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;row-gap:6px;align-items:center;min-width:0">
+        <button style="padding:4px 10px;border-radius:6px;cursor:pointer;flex:0 0 auto;white-space:nowrap">扫描</button>
+        <button style="padding:4px 10px;border-radius:6px;cursor:pointer;flex:0 0 auto;white-space:nowrap">回滚上次改动</button>
+      </div>
+    </div>
+    <div style="font-size:12px;opacity:.75;margin-top:6px;overflow-wrap:anywhere">给单个目标开一个本机端口，请求经它转发；没开端口的目标继续直连。</div>
+  </div>
+  <div style="border:1px solid #3a3a3a;border-radius:8px;padding:12px;margin-bottom:12px;box-sizing:border-box;max-width:100%;min-width:0;overflow:visible">
+    <div style="font-size:12px;opacity:.7;margin-bottom:8px">发现到的外连目标（3）</div>
+
+    <div style="display:flex;flex-direction:column;gap:6px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,.2);min-width:0;max-width:100%">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0">
+        <span style="font-size:12px;padding:1px 6px;border-radius:4px;background:rgba(128,128,128,.18);white-space:nowrap;flex:0 0 auto">模型</span>
+        <span style="font-weight:500;min-width:0;overflow-wrap:anywhere">Gemini 3.8 Flash</span>
+        <span style="font-size:12px;padding:1px 6px;border-radius:4px;background:rgba(128,128,128,.18);white-space:nowrap;flex:0 0 auto">已路由</span>
+        <span style="font-size:12px;padding:1px 6px;border-radius:4px;background:rgba(128,128,128,.18);white-space:nowrap;flex:0 0 auto">运行中 :8792</span>
+      </div>
+      <div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;opacity:.85;min-width:0;overflow-wrap:anywhere;word-break:break-word">generativelanguage.googleapis.com:443  http://127.0.0.1:8792/v1beta/openai</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;row-gap:6px;align-items:center;min-width:0">
+        <input placeholder="端口" value="8792" style="width:88px;flex:0 0 auto;box-sizing:border-box">
+        <button style="padding:4px 10px;border-radius:6px;cursor:pointer;flex:0 0 auto;white-space:nowrap">检查</button>
+        <button style="padding:4px 10px;border-radius:6px;cursor:pointer;flex:0 0 auto;white-space:nowrap">应用</button>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:6px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,.2);min-width:0;max-width:100%">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0">
+        <span style="font-size:12px;padding:1px 6px;border-radius:4px;background:rgba(128,128,128,.18);white-space:nowrap;flex:0 0 auto">待确认</span>
+        <span style="font-weight:500;min-width:0;overflow-wrap:anywhere">some-third-party-service.example.com</span>
+        <span style="font-size:12px;padding:1px 6px;border-radius:4px;background:rgba(128,128,128,.18);white-space:nowrap;flex:0 0 auto">待确认</span>
+      </div>
+      <div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;opacity:.85;min-width:0;overflow-wrap:anywhere;word-break:break-word">some-third-party-service.example.com:443  https://some-third-party-service.example.com/v1/very/long/path/that/keeps/going/and/going?with=query</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;row-gap:6px;align-items:center;min-width:0">
+        <input placeholder="端口" style="width:88px;flex:0 0 auto;box-sizing:border-box">
+        <button style="padding:4px 10px;border-radius:6px;cursor:pointer;flex:0 0 auto;white-space:nowrap">检查</button>
+        <button style="padding:4px 10px;border-radius:6px;cursor:pointer;flex:0 0 auto;white-space:nowrap">应用</button>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:6px;padding:8px 0;border-bottom:1px solid rgba(128,128,128,.2);min-width:0;max-width:100%">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0">
+        <span style="font-size:12px;padding:1px 6px;border-radius:4px;background:rgba(128,128,128,.18);white-space:nowrap;flex:0 0 auto">受保护</span>
+        <span style="font-weight:500;min-width:0;overflow-wrap:anywhere">platform.deepseek.com</span>
+        <span style="font-size:12px;padding:1px 6px;border-radius:4px;background:rgba(128,128,128,.18);white-space:nowrap;flex:0 0 auto">不建议改</span>
+      </div>
+      <div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;opacity:.85;min-width:0;overflow-wrap:anywhere;word-break:break-word">—</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;row-gap:6px;align-items:center;min-width:0"></div>
+    </div>
+  </div>
+</div>
+</body></html>
