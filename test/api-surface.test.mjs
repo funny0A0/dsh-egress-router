@@ -18,6 +18,8 @@ const STATE_KEYS = [
   'drift',
   'hostEnv',
   'history',
+  'lastError',
+  'clientContract',
   'listeners',
   'metrics',
   'patches',

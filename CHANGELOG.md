@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.8.0
+
+把「坏了但没人知道」的四处补上，并让设置页在宿主变化时不再静默消失。
+
+### 可靠性
+
+- **监听自愈（R1）**：监听器不再只被创建、不被观察。每个 relay 服务器都有 watchdog，`close` / `error` 都会把状态改成 `ok:false` 并按指数退避重建（`config.relay.recoveryBaseMs`，默认 1000ms；`config.relay.maxRecoveries`，默认 3 次），失败与恢复都进审计（`relay-down` / `relay-recover`）。主动 `stop` 走 `intentional` 集合，不会被误判成崩溃。
+- **错误不再被吞掉（R2）**：22 处静默 `catch {}` 收敛为 `recordError(scope, err)` / `safe(scope, fn, fallback)`。最后一次失败写进 `state.lastError`（设置页可见），同一 scope 每分钟最多一条审计，`recordingError` 防止「写状态失败 → 记错误 → 再写状态」的递归。
+- **熔断滑窗（R4）**：原来是「60 秒内 3 次」，只要两次改写间隔 61 秒就永不熔断。现在按 10 分钟滑窗计数，第 1/2/3 次触发分别停 10/30/60 分钟，次数持久化到 `state.reconcileOffenses`，重启不重置。
+
+### 界面
+
+- **刷新不再互相覆盖（R3）**：每次刷新带序号，旧响应直接丢弃；`AbortController` 取消上一轮；apply/rollback/端口检查等突发刷新合并为一次 150ms 去抖请求。
+- **写操作互斥（U1）**：任一次写入进行中，所有写按钮 `disabled`，避免二次点击产生冲突写入与重复审计。
+- **无障碍（U2）**：根节点 `role=region` + `aria-label` + `aria-busy` 与作用域内 `:focus-visible` 焦点环；标题是 `heading/aria-level=2`；结果区 `role=status aria-live=polite`；警告与漂移提示 `role=alert`。
+- **文案接线（U3）**：`botLaunchHint` 真正显示在应用结果里（说明只在本会话生效、长期生效请设 OS 环境变量），删掉从未使用的 `botBot`。
+- **宿主契约探测（C2）**：客户端不再假设 `window.__ModuleLoader__` 存在；缺失时打印明确错误而不是整个模块抛异常消失。
+
+### API
+
+- `?op=state` 新增 `lastError` 与 `clientContract`（loader 入口、槽位名、bundle 导出、`dsh.client` 声明），键数 19 → 21，`test/api-surface.test.mjs` 同步。
+- 新增 `test/reliability.test.mjs`（5 条）：watchdog 重建、`recordError` 落盘与去重、滑窗与逐级暂停、`.env` 写保护、客户端 loader/序号/aria 静态断言。
+
 ## 0.7.3
 
 修一个让整页看起来「空」的目录识别错误。

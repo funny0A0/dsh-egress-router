@@ -1,6 +1,6 @@
 {
   "name": "dsh-egress-router",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "type": "module",
   "description": "Per-endpoint loopback egress relay for DSH: route only the endpoints that need a proxy, keep everything else direct.",
   "main": "lib/index.js",

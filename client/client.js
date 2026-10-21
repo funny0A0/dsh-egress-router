@@ -1,5 +1,15 @@
 // Settings tab UI. Loaded by the DSH client module loader inside the web GUI.
-window.__ModuleLoader__.load({
+//
+// 0.8.0: probe the loader instead of assuming it. When a host renames or replaces
+// __ModuleLoader__, the old first line threw, the module never registered, and the settings
+// page simply had no tab — with nothing anywhere saying why.
+var __loader = typeof window !== 'undefined' ? window.__ModuleLoader__ : null
+if (!__loader || typeof __loader.load !== 'function') {
+  if (typeof console !== 'undefined' && console.error) {
+    console.error('[egress-router] this host does not expose window.__ModuleLoader__.load; the settings tab cannot register')
+  }
+} else
+__loader.load({
   id: 'dsh-egress-router',
   factory: (require) => {
     var module = { exports: {} }
@@ -9,6 +19,12 @@ window.__ModuleLoader__.load({
 
     var BASE = '/plugins/egress-router'
     var REQUEST_TIMEOUT_MS = 90000
+
+    // 0.8.0: one refresh at a time, newest wins. Concurrent refreshes used to race, so a slow
+    // response could overwrite a newer one and make an applied route look unapplied again.
+    var refreshSeq = 0
+    var refreshController = null
+    var refreshTimer = null
 
     // Two locales, chosen once from the browser. Everything user-facing goes through
     // t(); no string is assembled inline so a new locale is one object away.
@@ -35,7 +51,6 @@ window.__ModuleLoader__.load({
       findPort: '找端口',
       proxyLabel: '代理',
       proxyDirect: '直连',
-      botBot: '机器人',
       botApply: '用这个代理',
       botSummary: '补丁 {patch} · 当前 {proxy}',
       botApplied: '{name} 已设为经 {proxy} 出网（本会话生效）',
@@ -153,7 +168,6 @@ window.__ModuleLoader__.load({
       findPort: 'Find port',
       proxyLabel: 'Proxy',
       proxyDirect: 'Direct',
-      botBot: 'Bot',
       botApply: 'Use this proxy',
       botSummary: 'patch {patch} · now {proxy}',
       botApplied: '{name} now egresses through {proxy} (this session)',
@@ -266,7 +280,7 @@ window.__ModuleLoader__.load({
       return (n / 1024 / 1024).toFixed(1) + 'MB'
     }
 
-    function call(op, body, params) {
+    function call(op, body, params, signal) {
       var query = '?op=' + encodeURIComponent(op)
       if (params) {
         Object.keys(params).forEach(function (key) {
@@ -280,8 +294,10 @@ window.__ModuleLoader__.load({
         headers: { 'content-type': 'application/json' },
         body: body ? JSON.stringify(body) : undefined,
       }
-      // Never leave a button stuck on "applying…" when the host is busy (R11).
-      if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) options.signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      // Never leave a button stuck on "applying…" when the host is busy (R11). A caller that
+      // needs to cancel (the refresh path) supplies its own signal and owns the clock.
+      if (signal) options.signal = signal
+      else if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) options.signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
       return fetch(BASE + query, options).catch(function (err) {
         if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
           throw new Error(t('timeout', { s: Math.round(REQUEST_TIMEOUT_MS / 1000) }))
@@ -495,13 +511,9 @@ window.__ModuleLoader__.load({
       var busyState = React.useState(null)
       var busy = busyState[0]
       var setBusy = busyState[1]
-
-      function load() {
-        setData({ loading: true })
-        call('state')
-          .then(function (next) { setData(next) })
-          .catch(function (err) { setData({ error: err.message }) })
-      }
+      // Any write in flight disables every write button: a second click used to queue a
+      // conflicting write and a duplicate history line (U1, 0.8.0).
+      var anyBusy = busy !== null && busy !== undefined
 
       // `state` carries routes and listeners but not the row list — the table renders
       // `discovered`. Refreshing only `state` after a mutation left the row saying
@@ -509,8 +521,20 @@ window.__ModuleLoader__.load({
       // scanning showed an empty table, which read as "my configuration was lost" (0.5.3).
       function refreshAll(options) {
         var quiet = !!(options && options.quiet)
+        var seq = (refreshSeq += 1)
+        if (refreshController) { try { refreshController.abort() } catch (err) {} }
+        var controller = typeof AbortController !== 'undefined' ? new AbortController() : null
+        refreshController = controller
+        var signal = controller ? controller.signal : undefined
+        var timer = controller ? setTimeout(function () {
+          try { controller.abort() } catch (err) {}
+        }, REQUEST_TIMEOUT_MS) : null
+        var settle = function () { if (timer) clearTimeout(timer) }
         if (!quiet) setMessage(t('loading'))
-        return Promise.all([call('state'), call('discover', {})]).then(function (results) {
+        return Promise.all([call('state', null, null, signal), call('discover', {}, null, signal)]).then(function (results) {
+          settle()
+          // A newer refresh already started: its answer is the one the page should show.
+          if (seq !== refreshSeq) return null
           var next = Object.assign({}, results[0] || {})
           next.discovered = results[1]
           if (results[1] && results[1].warnings) next.warnings = results[1].warnings
@@ -518,13 +542,31 @@ window.__ModuleLoader__.load({
           if (!quiet) setMessage(null)
           return next
         }).catch(function (err) {
+          settle()
+          if (seq !== refreshSeq) return null
           if (!quiet) setMessage(null)
           if (quiet) setData(function (prev) { return Object.assign({}, prev, { error: err.message }) })
           else setData({ error: err.message })
         })
       }
 
-      React.useEffect(function () { refreshAll() }, [])
+      // Quiet refreshes arrive in bursts (apply, rollback, port check, patch action); collapse
+      // a burst into one request instead of racing three of them.
+      function refreshSoon() {
+        if (refreshTimer) clearTimeout(refreshTimer)
+        refreshTimer = setTimeout(function () {
+          refreshTimer = null
+          refreshSoon()
+        }, 150)
+      }
+
+      React.useEffect(function () {
+        refreshAll()
+        return function () {
+          if (refreshTimer) clearTimeout(refreshTimer)
+          if (refreshController) { try { refreshController.abort() } catch (err) {} }
+        }
+      }, [])
 
       // The host can rewrite cordis.patch.yml behind our back; when that happens the
       // provider talks to a port nobody listens on. Surface it and offer a one-click fix.
@@ -537,6 +579,7 @@ window.__ModuleLoader__.load({
         var contract = data && (data.contract || data.hostContract)
         if (!contract || contract.ok !== false) return null
         return h('div', {
+          role: 'alert',
           style: Object.assign({}, box, hint, { padding: '8px 12px', borderColor: 'var(--dsw-alias-state-error-primary, #f85149)' }),
         }, '⛔ ' + t('contractDegraded') + (contract.detail ? ' — ' + contract.detail : ''))
       }
@@ -548,7 +591,7 @@ window.__ModuleLoader__.load({
           setMessage(repaired.length
             ? t('repairDone', { n: repaired.length, detail: repaired.map(function (item) { return item.provider + ' -> :' + item.listenPort }).join(', ') })
             : t('repairNone'))
-          refreshAll({ quiet: true })
+          refreshSoon()
         }).catch(function (err) { setMessage(t('patchFailed') + err.message) })
       }
 
@@ -586,7 +629,7 @@ window.__ModuleLoader__.load({
           var taken = 0
           Object.keys(result.ports || {}).forEach(function (key) { (result.ports[key] ? free++ : taken++) })
           setMessage(t('portsSummary', { free: free, taken: taken }))
-          refreshAll({ quiet: true })
+          refreshSoon()
         }).catch(function (err) { setMessage(t('checkFailed') + err.message) })
       }
 
@@ -657,8 +700,9 @@ window.__ModuleLoader__.load({
         callRaw('POST', BASE + '?op=bot', { id: item.bot, proxy: value })
           .then(function (result) {
             setData(function (prev) { return Object.assign({}, prev, { bots: result.bots }) })
-            setMessage(t('botApplied', { name: item.name || item.id, proxy: value || t('proxyDirect') }))
-            refreshAll({ quiet: true })
+            // The hint used to exist in both locales and never reach the page (U3).
+            setMessage(t('botApplied', { name: item.name || item.id, proxy: value || t('proxyDirect') }) + ' — ' + t('botLaunchHint'))
+            refreshSoon()
           })
           .catch(function (err) { setMessage(t('applyFailed') + err.message) })
           .then(function () { setBusy(null) })
@@ -713,12 +757,12 @@ window.__ModuleLoader__.load({
               var tail = result.restartRequired ? t('restartTail') : ''
               setMessage(t('applied', { id: item.id, port: prepared.port, tail: tail }))
               setPreview(null)
-              refreshAll({ quiet: true })
+              refreshSoon()
             })
             .catch(function (err) {
               if (err.code === 'apply_unverified') {
                 setMessage(t('applyUnverified') + (err.message || ''))
-                refreshAll({ quiet: true })
+                refreshSoon()
                 return
               }
               if (err.code === 'port_in_use') {
@@ -752,7 +796,7 @@ window.__ModuleLoader__.load({
           .then(function (result) {
             var what = result.restored && result.restored.restored ? result.restored.restored : '-'
             setMessage(t('rolledBack', { what: what, tail: result.restartRequired ? t('restartTail') : '' }))
-            refreshAll({ quiet: true })
+            refreshSoon()
           })
           .catch(function (err) {
             // 0.2.2: the file changed after apply. Ask before overwriting hand edits.
@@ -763,7 +807,7 @@ window.__ModuleLoader__.load({
                 .then(function (result) {
                   var what = result.restored && result.restored.restored ? result.restored.restored : '-'
                   setMessage(t('rolledBack', { what: what, tail: result.restartRequired ? t('restartTail') : '' }))
-                  refreshAll({ quiet: true })
+                  refreshSoon()
                 })
                 .catch(function (second) { setMessage(t('rollbackFailed') + second.message) })
               return
@@ -791,7 +835,7 @@ window.__ModuleLoader__.load({
             if (action === 'revert') setMessage(t('patchReverted', { id: item.id, tail: tail }))
             else if (action === 'apply') setMessage(t('patchApplied', { id: item.id, tail: tail }))
             else setMessage(t('patchesTitle') + ': ' + patchStatusLabel(result.patch && result.patch.status))
-            refreshAll({ quiet: true })
+            refreshSoon()
           })
           .catch(function (err) { setMessage(t('patchFailed') + err.message) })
           .then(function () { setBusy(null) })
@@ -804,7 +848,7 @@ window.__ModuleLoader__.load({
       // as "there is nothing to configure" instead of "the plugin is looking in the wrong
       // place". Say it out loud (0.7.3).
       var profileWarning = data.profileOk === false
-        ? h('div', { style: box }, t('profileMissing', { dir: data.profileDir || '' }))
+        ? h('div', { role: 'alert', style: box }, t('profileMissing', { dir: data.profileDir || '' }))
         : null
 
       var discovered = data.discovered || { items: [] }
@@ -847,7 +891,7 @@ window.__ModuleLoader__.load({
           preview.port ? h('div', { style: Object.assign({}, hint, { marginTop: 6 }) },
             preview.portFree === false ? t('planPortBusy', { port: preview.port }) : t('planPortFree', { port: preview.port })) : null,
           h('div', { style: { marginTop: 6 } },
-            h('button', { style: btn, onClick: function () { setPreview(null) } }, t('closePreview'))))
+            h('button', { style: btn, disabled: anyBusy, onClick: function () { setPreview(null) } }, t('closePreview'))))
       }
 
       function formatValue(value) {
@@ -925,35 +969,43 @@ window.__ModuleLoader__.load({
               ? h('div', { style: mono }, t('patchExternal'))
               : null,
             h('div', { style: actions },
-              item.status === 'pending' ? h('button', { style: btnPrimary, onClick: function () { patchAction(item, 'apply') } }, t('patchApply')) : null,
-              item.status === 'applied' && (item.backup || item.ledger) ? h('button', { style: btn, onClick: function () { patchAction(item, 'revert') } }, t('patchRevert')) : null,
-              h('button', { style: btn, onClick: function () { patchAction(item, 'verify') } }, t('patchVerify'))))
+              item.status === 'pending' ? h('button', { style: btnPrimary, disabled: anyBusy, onClick: function () { patchAction(item, 'apply') } }, t('patchApply')) : null,
+              item.status === 'applied' && (item.backup || item.ledger) ? h('button', { style: btn, disabled: anyBusy, onClick: function () { patchAction(item, 'revert') } }, t('patchRevert')) : null,
+              h('button', { style: btn, disabled: anyBusy, onClick: function () { patchAction(item, 'verify') } }, t('patchVerify'))))
         })
       ) : null
 
-      return h('div', null,
+      return h('div', {
+        className: 'dsh-egress-root',
+        role: 'region',
+        'aria-label': t('title'),
+        'aria-busy': anyBusy ? 'true' : 'false',
+      },
+        h('style', null, '.dsh-egress-root button:focus-visible{outline:2px solid var(--dsw-focus-ring-color, #4d9fff);outline-offset:2px}'),
         h('div', { style: box },
           h('div', { style: headerBar },
             h('div', { style: { minWidth: 0 } },
-              h('div', { style: { fontWeight: 600, fontSize: 15, lineHeight: '22px', color: labelPrimary } }, t('title')),
+              h('div', { role: 'heading', 'aria-level': 2, style: { fontWeight: 600, fontSize: 15, lineHeight: '22px', color: labelPrimary } }, t('title')),
               h('div', { style: Object.assign({}, hint, { marginTop: 4 }) }, t('subtitle'))),
             h('div', { style: actions },
-              h('button', { style: btn, onClick: scan }, t('scan')),
-              h('button', { style: btn, onClick: checkPorts }, t('portCheck')),
-              h('button', { style: btn, onClick: function () { rollback(null) } }, t('rollbackLast'))
+              h('button', { style: btn, disabled: anyBusy, onClick: scan }, t('scan')),
+              h('button', { style: btn, disabled: anyBusy, onClick: checkPorts }, t('portCheck')),
+              h('button', { style: btn, disabled: anyBusy, onClick: function () { rollback(null) } }, t('rollbackLast'))
             )
           )),
-        message ? h('div', { style: Object.assign({}, box, hint, { padding: '8px 12px' }) }, message) : null,
+        message ? h('div', { role: 'status', 'aria-live': 'polite', style: Object.assign({}, box, hint, { padding: '8px 12px' }) }, message) : null,
         profileWarning,
         (data.paused || []).map(function (entry, index) {
           return h('div', {
             key: 'p' + index,
+            role: 'status',
             style: Object.assign({}, box, hint, { padding: '8px 12px', borderColor: 'var(--dsw-alias-state-warn-primary, #d29922)' }),
           }, '⏸ ' + t('pausedHint', { provider: entry.provider, until: entry.until }))
         }),
         (data.warnings || []).map(function (warn, index) {
           return h('div', {
             key: 'w' + index,
+            role: 'alert',
             style: Object.assign({}, box, hint, { padding: '8px 12px', borderColor: 'var(--dsw-alias-state-warn-primary, #d29922)' }),
           }, '⚠ ' + warn.message)
         }),
@@ -964,7 +1016,7 @@ window.__ModuleLoader__.load({
             },
               h('div', {}, '⚠ ' + t('driftWarning', { detail: driftItems().map(function (item) { return item.provider + ': ' + item.before + ' -> :' + item.listenPort }).join('; ') })),
               h('div', { style: actions },
-                h('button', { style: btn, onClick: repairConfig }, t('repairConfig'))
+                h('button', { style: btn, disabled: anyBusy, onClick: repairConfig }, t('repairConfig'))
               ))
           : null,
         h('div', { style: box },
@@ -1009,7 +1061,7 @@ window.__ModuleLoader__.load({
                 }, proxyOptions()) : null,
                 isPatchable(item) && item.target ? h('button', {
                   style: btn,
-                  disabled: busy === item.id + ':port',
+                  disabled: anyBusy,
                   onClick: function () {
                     suggestPort(item).then(function (port) {
                       if (port) setMessage(t('portSuggested', { port: port }))
@@ -1022,7 +1074,7 @@ window.__ModuleLoader__.load({
                   style: originInput,
                   onChange: function (event) { pendingOrigins[item.id] = event.target.value },
                 }) : null,
-                item.target ? h('button', { style: btn, onClick: function () { check(item) } }, t('check')) : null,
+                item.target ? h('button', { style: btn, disabled: anyBusy, onClick: function () { check(item) } }, t('check')) : null,
                 item.bot ? h('select', {
                   title: t('proxyLabel'),
                   style: proxySelect,
@@ -1035,15 +1087,17 @@ window.__ModuleLoader__.load({
                 }, proxyOptions()) : null,
                 item.bot ? h('button', {
                   style: Object.assign({}, btnPrimary, busy === item.id + ':bot' ? { opacity: 0.6 } : {}),
+                  disabled: anyBusy,
                   onClick: function () { applyBot(item, botValue(item)) },
                 }, t('botApply')) : null,
-                isPatchable(item) && item.target ? h('button', { style: btn, onClick: function () { planItem(item) } }, t('plan')) : null,
+                isPatchable(item) && item.target ? h('button', { style: btn, disabled: anyBusy, onClick: function () { planItem(item) } }, t('plan')) : null,
                 isPatchable(item) && item.target ? h('button', {
                   style: Object.assign({}, btnPrimary, busy === item.id + ':apply' ? { opacity: 0.6 } : {}),
+                  disabled: anyBusy,
                   onClick: function () { applyItem(item) },
                 }, t('apply')) : null,
-                live && live.ok ? h('button', { style: btn, onClick: function () { testItem(item) } }, t('test')) : null,
-                item.routed ? h('button', { style: btn, onClick: function () { rollback(item.id) } }, t('undo')) : null,
+                live && live.ok ? h('button', { style: btn, disabled: anyBusy, onClick: function () { testItem(item) } }, t('test')) : null,
+                item.routed ? h('button', { style: btn, disabled: anyBusy, onClick: function () { rollback(item.id) } }, t('undo')) : null,
                 !isPatchable(item) && !item.bot && item.target ? h('span', { style: mono }, t('needsManual')) : null
               ),
               item.bot ? h('div', { style: Object.assign({}, hint, { marginTop: 4 }) },
