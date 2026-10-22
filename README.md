@@ -125,6 +125,7 @@ Invoke-RestMethod "http://127.0.0.1:8792/__health"
 | `运行中 :8792` / `未运行` | 监听是否真的起来了 |
 | `42 次 · ↑14.9KB ↓86.1KB · p50 231.4ms · 5xx 1 · 累计 1.2k 次` | 本次监听的指标 + 跨重启累计（`metricsTotals`）；`暂无流量` 表示还没请求过 |
 | `经 clash` / `直连` | 该行选中的上游 |
+| `新建中转` `复制地址` `删除` | 建一条不改目标配置的本机中转、复制回环地址、删除监听 |
 | `检查` `预检` `找端口` `应用` `测试` `撤销` | 探活、看 diff、取空闲端口、落盘生效、经中转发一次真实请求、按项回滚 |
 
 **兼容补丁**：列出声明式补丁的状态（`已生效` / `待应用` / `锚点缺失` / 包未安装）。
@@ -161,6 +162,20 @@ Invoke-RestMethod "http://127.0.0.1:8792/__health"
 三种写法等价（`host` + `port` / `target: "host:port"` / `url`）。它们会以「自定义」徽章出现在扫描结果里，可以 `检查` 与 `测试`，但 `apply` 会返回 `not_patchable`：没有可改写的 `baseURL`。
 
 > 不要写 `name: dsh-egress-router`：`bundles` 已经加载了本插件，再写 `name` 会被当成第二个实例。
+
+### 本机中转（relay 路由，0.10.0）
+
+没有 `baseURL` 的目标（CLI、别的插件、webhook、抓取脚本）改不了配置，但仍然可以走本机端口：
+
+```bash
+curl -s -X POST "http://127.0.0.1:<GUI 端口>/plugins/egress-router?op=routes" \
+  -H 'content-type: application/json' -H 'sec-fetch-site: same-origin' \
+  -d '{"action":"upsert","id":"relay:hf","target":"huggingface.co:443","listenPort":8793,"proxy":"clash"}'
+```
+
+之后把调用方地址换成 `http://127.0.0.1:8793`，请求经 Clash 转发到 `huggingface.co:443`；删除用 `{"action":"delete","id":"relay:hf"}`。这类路由不写 `cordis.patch.yml`，所以 `restartRequired` 恒为 `false`。
+
+页面上的「本机中转（不改目标配置）」区块就是这两个调用的界面版：填目标与端口、选代理、点「新建中转」，之后可复制地址或删除。
 
 ### `$DSH_HOME/storages/egress-router/state.json`
 
@@ -218,6 +233,8 @@ export DSH_TELEGRAM_PROXY=http://127.0.0.1:7897
 | `ports` | GET | `?op=ports&port=8791&port=8792` 批量查占用 |
 | `suggest` | POST | 取一个空闲端口（跳过本插件已占用的） |
 | `apply` | POST | 应用：起监听 → 写 `baseURL` → 自检；失败自动回滚 |
+| `routes` | GET / POST | 路由列表 / 新建或更新 / 删除；`relay:` 前缀是「仅中转」路由，不改目标配置 |
+| `batch` | POST | 批量应用 / 撤销（≤20 条，先全量预检，失败逆序补偿） |
 | `rollback` | POST | 按项或全局回滚最近一次改动 |
 | `test` | POST | 经已完成的中转发一次真实请求 |
 | `patches` / `patch` | GET / POST | 兼容补丁列表 / 应用 / 复原 / 复查 |
@@ -276,7 +293,7 @@ CI 矩阵与真机记录见 [docs/compatibility.md](docs/compatibility.md)；发
 ## 开发
 
 ```bash
-npm test               # 82 条测试 / 18 套件（自带 runner：node --test 在沙箱内 worker 会 EPERM）
+npm test               # 94 条测试 / 19 套件（自带 runner：node --test 在沙箱内 worker 会 EPERM）
 npm run check          # 所有模块 node --check
 npm run check:package  # 打包门禁：必备/禁入文件、体积
 npm run install-smoke  # 打包 → 干净 consumer 安装 → 启动已安装副本 → 校验契约
@@ -291,7 +308,7 @@ client/         设置页 bundle（无构建，纯 ESM + h()）
 patches/        声明式兼容补丁定义
 docs/           安装、兼容矩阵、回滚、发布清单
 preview/        离线渲染 harness 与明暗截图
-test/           18 个套件，82 条用例（含契约快照 test/contract/）
+test/           19 个套件，94 条用例（含契约快照 test/contract/）
 scripts/        发布门禁与安装冒烟
 ```
 
@@ -326,6 +343,7 @@ scripts/        发布门禁与安装冒烟
 | 0.8.0 | 可靠性：监听自愈（指数退避）、失败统一落盘 `lastError`、刷新序号/取消/去抖、写操作互斥与无障碍标注、熔断改十分钟滑窗并逐级延长 |
 | 0.9.0 | 可观测：指标跨重启累计（`state` v9）、脱敏诊断包、`config.targets` 自定义端点、上游健康体检、`apiVersion` |
 | 0.9.1 | 发布工程：状态 schema 校验（`schemaOk`/`schemaErrors`）、API 与客户端契约快照、三平台 CI 安装冒烟、发布清单 |
+| 0.10.0 | 「仅中转」路由（`relay:`，不改目标配置）、路由 CRUD（`?op=routes`）、批量应用/撤销（`?op=batch`，预检 + 逆序补偿）、修掉安静刷新自递归与错误码丢失 |
 
 完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 

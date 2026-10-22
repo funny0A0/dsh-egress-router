@@ -102,6 +102,8 @@ Routes live in `$DSH_HOME/storages/egress-router/state.json` (`version: 9`,
 | `suggest` | POST | pick a free port |
 | `apply` | POST | listen -> write `baseURL` -> verify, rollback on failure |
 | `rollback` | POST | undo by item or the last change |
+| `routes` | GET / POST | list routes; upsert or delete one. `relay:<name>` opens a listener only and never edits the target config |
+| `batch` | POST | apply / undo up to 20 routes: full preflight, then reverse-order compensation on failure |
 | `test` | POST | one real request through the relay |
 | `patches` / `patch` | GET / POST | compatibility patches: list / apply / revert / verify |
 | `bot` | POST | set a bot's proxy (injected into the process environment) |
@@ -164,7 +166,7 @@ for the release checklist, and [docs/rollback.md](docs/rollback.md) for going ba
 ## Development
 
 ```bash
-npm test               # 82 tests / 18 suites (custom runner: node --test workers hit EPERM in the sandbox)
+npm test               # 94 tests / 19 suites (custom runner: node --test workers hit EPERM in the sandbox)
 npm run check          # node --check every module
 npm run check:package  # package gate: required/forbidden files, size
 npm run install-smoke  # pack -> clean consumer install -> boot the installed copy -> contract check

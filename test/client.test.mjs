@@ -150,3 +150,29 @@ test('the page loads the row list on mount instead of waiting for a manual scan'
   assert.ok(urls.some((url) => url.includes('op=state')), 'state was not fetched on mount')
   assert.ok(urls.some((url) => url.includes('op=discover')), 'the row list was not fetched on mount')
 })
+
+
+test('the 0.10.0 page reaches the relay and batch ops', () => {
+  const source = fs.readFileSync(path.join(here, '..', 'client', 'client.js'), 'utf8')
+  assert.ok(source.includes("call('routes'"), 'relay rows never call the routes op')
+  assert.ok(source.includes("callRaw('POST', BASE + '?op=batch'"), 'batch never calls the batch op')
+  assert.ok(source.includes('relayTitle'), 'the relay section has no heading')
+  assert.ok(source.includes('navigator.clipboard'), 'the copy-address button has no implementation')
+  assert.ok(source.includes("t('batchSelect')"), 'the selection checkbox has no accessible label')
+  for (const key of ['route-create', 'route-update', 'route-delete', 'batch']) {
+    assert.ok(source.includes(key), 'history label missing: ' + key)
+  }
+})
+
+test('a quiet refresh reaches the host instead of re-arming itself', () => {
+  const source = fs.readFileSync(path.join(here, '..', 'client', 'client.js'), 'utf8')
+  const body = source.slice(source.indexOf('function refreshSoon()'), source.indexOf('function refreshSoon()') + 400)
+  assert.ok(!/refreshSoon\(\)\s*\n\s*\}, 150\)/.test(body), 'the debounce still calls itself')
+  assert.ok(body.includes('refreshAll({ quiet: true })'), 'the debounce does not refresh')
+})
+
+test('a failed call keeps the machine code and payload', () => {
+  const source = fs.readFileSync(path.join(here, '..', 'client', 'client.js'), 'utf8')
+  assert.ok(source.includes('failure.code = json.error'), 'the error code is dropped')
+  assert.ok(source.includes('failure.payload = json'), 'the batch payload is dropped')
+})

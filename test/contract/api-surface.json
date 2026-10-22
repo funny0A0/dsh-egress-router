@@ -35,7 +35,10 @@
     "invalid_action": 400,
     "unknown_patch": 404,
     "provider_not_found": 400,
-    "private_target": 400
+    "private_target": 400,
+    "unknown_route": 404,
+    "no_actions": 400,
+    "loopback_target": 400
   },
   "client": {
     "loader": "window.__ModuleLoader__.load",

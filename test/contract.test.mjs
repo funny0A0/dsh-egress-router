@@ -76,6 +76,9 @@ try {
     unknown_patch: () => post('patch', { id: 'nope', action: 'verify' }),
     provider_not_found: () => post('apply', { itemId: 'llm:nope', target: 'example.com:443', listenPort: 8799 }),
     private_target: () => post('probe', { target: '127.0.0.1:1' }),
+    unknown_route: () => post('routes', { action: 'delete', id: 'relay:nope' }),
+    no_actions: () => post('batch', { actions: [] }),
+    loopback_target: () => post('routes', { action: 'upsert', id: 'relay:local', target: '127.0.0.1:9', listenPort: 8799 }),
   }
   for (const [code, expected] of Object.entries(snapshot.errorCodes)) {
     const result = await probes[code]()
@@ -83,12 +86,21 @@ try {
     assert.equal(result.status, expected, 'status for ' + code + ' drifted')
   }
 
+  // 3b. The 0.10.0 route surface: listing is read-only and carries the api version.
+  const listed = await get('routes')
+  assert.equal(listed.status, 200)
+  assert.equal(listed.data.apiVersion, snapshot.apiVersion)
+  assert.ok(Array.isArray(listed.data.routes))
+
   // 4. Client half: the host loads it by these strings, so they are contract too.
   assert.deepEqual(state.clientContract.loader, snapshot.client.loader)
   assert.deepEqual(state.clientContract.slot, snapshot.client.slot)
   assert.ok(clientSource.includes(snapshot.client.loader), 'client does not use the declared loader')
   assert.ok(clientSource.includes("'" + snapshot.client.slot + "'"), 'client does not register on the declared slot')
   assert.ok(clientSource.includes(snapshot.client.label), 'client no longer labels the tab')
+  // 0.10.0: the page must actually reach the two new ops.
+  assert.ok(clientSource.includes('?op=batch'), 'client does not call the batch op')
+  assert.ok(clientSource.includes("call('routes'"), 'client does not call the routes op')
 
   // 5. Package metadata the host reads before it ever runs our code.
   assert.deepEqual(Object.keys(manifest.exports).sort(), snapshot.client.exports)

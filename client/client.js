@@ -151,6 +151,34 @@ __loader.load({
       stAnchorMissing: '锚点缺失',
       stAnchorAmbiguous: '锚点不唯一',
       stError: '错误',
+      kindRelay: '中转',
+      relayTitle: '本机中转（不改目标配置）',
+      relayHint: '给没有 baseURL 的目标开一个本机端口：把调用方地址改成 http://127.0.0.1:<端口>，请求经这里转发，可选走代理。',
+      relayTarget: '目标 host:port',
+      relayPort: '端口',
+      relayCreate: '新建中转',
+      relayEmpty: '还没有中转路由。',
+      relayCopy: '复制地址',
+      relayCopied: '已复制：{text}',
+      relayDelete: '删除',
+      relayCreated: '已创建 {id}（:{port}）',
+      relayDeleted: '已删除 {id}',
+      relayTargetRequired: '请填写目标 host:port',
+      batchSelected: '已选 {n} 项',
+      batchSelect: '选择这一项',
+      batchApply: '批量应用',
+      batchUndo: '批量撤销',
+      batchClear: '清除选择',
+      batchApplying: '正在批量应用',
+      batchUndoing: '正在批量撤销',
+      batchDone: '批量完成：{n} 项',
+      batchFailed: '批量在第 {n} 项后停止，已回退 {undone} 项：{detail}',
+      batchEmpty: '先勾选要处理的目标',
+      batchNeedsPort: '{id} 还没有端口',
+      opRouteCreate: '新建中转',
+      opRouteUpdate: '更新中转',
+      opRouteDelete: '删除路由',
+      opBatch: '批量操作',
     }
     var EN = {
       tab: 'Egress Router',
@@ -275,6 +303,34 @@ __loader.load({
       stAnchorMissing: 'anchor missing',
       stAnchorAmbiguous: 'anchor not unique',
       stError: 'error',
+      kindRelay: 'relay',
+      relayTitle: 'Local relay (target config untouched)',
+      relayHint: 'Give a target without a baseURL its own loopback port: point the caller at http://127.0.0.1:<port> and requests are forwarded, optionally through a proxy.',
+      relayTarget: 'target host:port',
+      relayPort: 'port',
+      relayCreate: 'New relay',
+      relayEmpty: 'No relay routes yet.',
+      relayCopy: 'Copy address',
+      relayCopied: 'Copied: {text}',
+      relayDelete: 'Delete',
+      relayCreated: 'Created {id} (:{port})',
+      relayDeleted: 'Deleted {id}',
+      relayTargetRequired: 'target host:port is required',
+      batchSelected: '{n} selected',
+      batchSelect: 'Select this row',
+      batchApply: 'Apply selected',
+      batchUndo: 'Undo selected',
+      batchClear: 'Clear selection',
+      batchApplying: 'Applying selection',
+      batchUndoing: 'Undoing selection',
+      batchDone: 'Batch finished: {n} action(s)',
+      batchFailed: 'Batch stopped after {n} action(s); {undone} undone: {detail}',
+      batchEmpty: 'Select at least one target first',
+      batchNeedsPort: '{id} has no port yet',
+      opRouteCreate: 'relay created',
+      opRouteUpdate: 'relay updated',
+      opRouteDelete: 'route deleted',
+      opBatch: 'batch',
     }
     var locale = (typeof navigator !== 'undefined' && navigator && navigator.language) || 'zh'
     var DICT = /^zh/i.test(String(locale)) ? ZH : EN
@@ -529,6 +585,13 @@ __loader.load({
       // Any write in flight disables every write button: a second click used to queue a
       // conflicting write and a duplicate history line (U1, 0.8.0).
       var anyBusy = busy !== null && busy !== undefined
+      // 0.10.0: relay-only routes and batch selection are page state; the host owns the truth.
+      var selectedState = React.useState({})
+      var selected = selectedState[0]
+      var setSelected = selectedState[1]
+      var relayState = React.useState({ target: '', port: '', proxy: '' })
+      var relayForm = relayState[0]
+      var setRelayForm = relayState[1]
 
       // `state` carries routes and listeners but not the row list — the table renders
       // `discovered`. Refreshing only `state` after a mutation left the row saying
@@ -571,7 +634,7 @@ __loader.load({
         if (refreshTimer) clearTimeout(refreshTimer)
         refreshTimer = setTimeout(function () {
           refreshTimer = null
-          refreshSoon()
+          refreshAll({ quiet: true })
         }, 150)
       }
 
@@ -702,7 +765,14 @@ __loader.load({
         if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) options.signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
         return fetch(url, options).then(function (res) {
           return res.json().then(function (json) {
-            if (!res.ok) throw new Error((json && (json.message || json.error)) || t('httpError', { status: res.status }))
+            if (!res.ok) {
+              // A batch 502 carries results[] and compensated; dropping them would leave the
+              // page saying "failed" with no account of what was undone (0.10.0).
+              var failure = new Error((json && (json.message || json.error)) || t('httpError', { status: res.status }))
+              if (json && json.error) failure.code = json.error
+              failure.payload = json
+              throw failure
+            }
             return json
           })
         })
@@ -740,6 +810,103 @@ __loader.load({
         return [h('option', { value: '' }, t('proxyDirect'))].concat(Object.keys(table).map(function (name) {
           return h('option', { value: name }, name)
         }))
+      }
+
+      function relaySlug(target) {
+        var slug = String(target || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
+        return 'relay:' + (slug || 'target')
+      }
+
+      function relayRows() {
+        var list = (data && data.routes) || []
+        return list.filter(function (route) { return route.kind === 'relay' })
+      }
+
+      function selectedIds() {
+        return Object.keys(selected).filter(function (id) { return selected[id] })
+      }
+
+      function toggleSelected(id) {
+        var next = Object.assign({}, selected)
+        next[id] = !next[id]
+        setSelected(next)
+      }
+
+      function clearSelected() { setSelected({}) }
+
+      // A relay route has no provider behind it: the caller pastes the loopback address and
+      // this plugin forwards it, optionally through a proxy (0.10.0).
+      function createRelay() {
+        var target = String(relayForm.target || '').trim()
+        var port = Number(relayForm.port || 0)
+        if (!target) { setMessage(t('relayTargetRequired')); return }
+        if (!port) { setMessage(t('portRequired')); return }
+        setBusy('relay:new')
+        call('routes', { action: 'upsert', id: relaySlug(target), target: target, listenPort: port, proxy: relayForm.proxy || '' })
+          .then(function (result) {
+            setRelayForm({ target: '', port: '', proxy: '' })
+            setMessage(t('relayCreated', { id: result.route.id, port: result.route.listenPort }))
+            refreshSoon()
+          })
+          .catch(function (err) { setMessage(t('applyFailed') + err.message) })
+          .then(function () { setBusy(null) })
+      }
+
+      function removeRelay(route) {
+        setBusy(route.id + ':relay')
+        call('routes', { action: 'delete', id: route.id })
+          .then(function () { setMessage(t('relayDeleted', { id: route.id })); refreshSoon() })
+          .catch(function (err) { setMessage(t('applyFailed') + err.message) })
+          .then(function () { setBusy(null) })
+      }
+
+      function copyOrigin(route) {
+        var text = route.origin || ('http://127.0.0.1:' + route.listenPort)
+        var done = function () { setMessage(t('relayCopied', { text: text })) }
+        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done).catch(function () { setMessage(text) })
+          return
+        }
+        setMessage(text)
+      }
+
+      // One round trip for many rows. The host validates everything before the first write and
+      // compensates on failure, so the page only has to report what came back (0.10.0).
+      function batchSelected(action) {
+        var ids = selectedIds()
+        if (!ids.length) { setMessage(t('batchEmpty')); return }
+        var items = (data.discovered && data.discovered.items) || []
+        var actions = ids.map(function (id) {
+          if (action === 'rollback') return { itemId: id, action: 'rollback' }
+          var item = null
+          for (var i = 0; i < items.length; i += 1) if (items[i].id === id) item = items[i]
+          var port = Number((item && (ports[id] || item.listenPort)) || 0)
+          var body = { itemId: id, action: 'apply', target: item ? item.target : null, listenPort: port }
+          if (proxies[id] !== undefined) body.proxy = proxies[id]
+          else if (item && item.proxy) body.proxy = item.proxy
+          return body
+        })
+        for (var i = 0; i < actions.length; i += 1) {
+          if (actions[i].action === 'apply' && (!actions[i].target || !actions[i].listenPort)) {
+            setMessage(t('batchNeedsPort', { id: actions[i].itemId }))
+            return
+          }
+        }
+        setBusy('batch:' + action)
+        setMessage((action === 'rollback' ? t('batchUndoing') : t('batchApplying')) + '…')
+        callRaw('POST', BASE + '?op=batch', { actions: actions })
+          .then(function (result) {
+            clearSelected()
+            setMessage(t('batchDone', { n: (result.results || []).length }))
+            refreshSoon()
+          })
+          .catch(function (err) {
+            var rows = (err.payload && err.payload.results) || []
+            var compensated = (err.payload && err.payload.compensated) || 0
+            setMessage(t('batchFailed', { n: rows.length, undone: compensated, detail: err.message }))
+            refreshSoon()
+          })
+          .then(function () { setBusy(null) })
       }
 
       // Chat bots expose no baseURL: their egress is a managed patch plus one
@@ -1005,6 +1172,10 @@ __loader.load({
         'patch-repair': t('opPatchRepair'),
         'duplicate-instance': t('opDuplicate'),
         discover: t('opDiscover'),
+        'route-create': t('opRouteCreate'),
+        'route-update': t('opRouteUpdate'),
+        'route-delete': t('opRouteDelete'),
+        batch: t('opBatch'),
       }
       function opLabel(op) {
         return OP_LABELS[op] || String(op || '-')
@@ -1020,6 +1191,46 @@ __loader.load({
             ' · ' + (entry.ok === false ? t('failed') : t('ok')) + ' · ' + String(entry.detail || ''))
         })
       ) : null
+
+      var relayRowsList = relayRows()
+      var relaySection = h('div', { style: box },
+        h('div', { style: sectionTitle }, t('relayTitle')),
+        h('div', { style: Object.assign({}, hint, { marginBottom: 6 }) }, t('relayHint')),
+        relayRowsList.length ? relayRowsList.map(function (route) {
+          return h('div', { key: 'r' + route.id, style: row },
+            h('div', { style: rowHead },
+              h('span', { style: tagTone('info') }, t('kindRelay')),
+              h('span', { style: name }, route.id),
+              route.status && route.status.ok
+                ? h('span', { style: tagTone('ok') }, t('running', { port: route.listenPort }))
+                : h('span', { style: tagTone('bad') }, t('down', { port: route.listenPort })),
+              h('span', { style: tag }, route.proxy || t('proxyDirect'))),
+            h('div', { style: mono }, route.target + '  ->  ' + (route.origin || ('http://127.0.0.1:' + route.listenPort))),
+            h('div', { style: actions },
+              h('button', { style: btn, disabled: anyBusy, onClick: function () { copyOrigin(route) } }, t('relayCopy')),
+              h('button', { style: btn, disabled: anyBusy, onClick: function () { removeRelay(route) } }, t('relayDelete'))))
+        }) : h('div', { style: mono }, t('relayEmpty')),
+        h('div', { style: Object.assign({}, actions, { marginTop: 8 }) },
+          h('input', {
+            placeholder: t('relayTarget'),
+            value: relayForm.target,
+            style: Object.assign({}, input, { width: 220 }),
+            onChange: function (event) { setRelayForm(Object.assign({}, relayForm, { target: event.target.value })) },
+          }),
+          h('input', {
+            placeholder: t('relayPort'),
+            value: relayForm.port,
+            style: portInput,
+            onChange: function (event) { setRelayForm(Object.assign({}, relayForm, { port: event.target.value })) },
+          }),
+          h('select', {
+            title: t('proxyLabel'),
+            style: proxySelect,
+            value: relayForm.proxy,
+            onChange: function (event) { setRelayForm(Object.assign({}, relayForm, { proxy: event.target.value })) },
+          }, proxyOptions()),
+          h('button', { style: btnPrimary, disabled: anyBusy, onClick: createRelay }, t('relayCreate')))
+      )
 
       var patchesSection = data.patches && data.patches.length ? h('div', { style: box },
         h('div', { style: sectionTitle }, t('patchesTitle')),
@@ -1087,13 +1298,25 @@ __loader.load({
                 h('button', { style: btn, disabled: anyBusy, onClick: repairConfig }, t('repairConfig'))
               ))
           : null,
+        relaySection,
         h('div', { style: box },
           h('div', { style: sectionTitle }, t('found', { n: visible.length })),
+          selectedIds().length ? h('div', { style: Object.assign({}, actions, { marginBottom: 6 }) },
+            h('span', { style: hint }, t('batchSelected', { n: selectedIds().length })),
+            h('button', { style: btnPrimary, disabled: anyBusy, onClick: function () { batchSelected('apply') } }, t('batchApply')),
+            h('button', { style: btn, disabled: anyBusy, onClick: function () { batchSelected('rollback') } }, t('batchUndo')),
+            h('button', { style: btn, disabled: anyBusy, onClick: clearSelected }, t('batchClear'))) : null,
           visible.length === 0 ? h('div', { style: mono }, t('noTargets')) : null,
           visible.map(function (item) {
             var live = listening[item.id]
             return h('div', { key: item.id, style: row },
               h('div', { style: rowHead },
+                isPatchable(item) && item.target ? h('input', {
+                  type: 'checkbox',
+                  checked: !!selected[item.id],
+                  'aria-label': t('batchSelect'),
+                  onChange: function () { toggleSelected(item.id) },
+                }) : null,
                 h('span', { style: tag }, kindLabel(item.kind)),
                 h('span', { style: name }, item.name || item.id),
                 item.confidence === 'low' ? h('span', { style: tagTone('warn') }, t('lowConfidence')) : null,

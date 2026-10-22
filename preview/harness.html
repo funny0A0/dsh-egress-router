@@ -123,6 +123,13 @@
       })
     }
     if (props.className) el.className = props.className
+    // Attributes matter for the checkbox rows: without type/checked the browser renders a
+    // full-width text box, which is a harness artefact, not the real layout.
+    if (props.type) el.type = props.type
+    if (props.checked !== undefined) el.checked = !!props.checked
+    if (props.disabled !== undefined) el.disabled = !!props.disabled
+    if (props.role) el.setAttribute('role', props.role)
+    if (props['aria-label']) el.setAttribute('aria-label', props['aria-label'])
     if (props.placeholder !== undefined) el.placeholder = props.placeholder
     if (props.value !== undefined) el.value = props.value
     if (props.title !== undefined) el.title = props.title
@@ -157,7 +164,10 @@
     ok: true,
     config: { proxies: { clash: 'http://127.0.0.1:7897' }, listenHost: '127.0.0.1' },
     profileDir: 'C:\\Users\\86139\\.dsh\\profiles\\desktop',
-    routes: [{ id: 'llm:gemini', target: 'generativelanguage.googleapis.com:443', listenPort: 8792, proxy: 'clash', tls: true, maxSockets: 6 }],
+    routes: [
+      { id: 'llm:gemini', kind: 'provider', target: 'generativelanguage.googleapis.com:443', listenPort: 8792, proxy: 'clash', tls: true, maxSockets: 6 },
+      { id: 'relay:hf', kind: 'relay', target: 'huggingface.co:443', listenPort: 8793, proxy: null, origin: 'http://127.0.0.1:8793', status: { id: 'relay:hf', port: 8793, ok: true } },
+    ],
     status: [{ id: 'llm:gemini', host: '127.0.0.1', port: 8792, target: 'generativelanguage.googleapis.com:443', ok: true, error: null }],
     listeners: [{ id: 'llm:gemini', host: '127.0.0.1', port: 8792, ok: true, error: null }],
     metrics: {

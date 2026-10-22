@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.10.0
+
+两条新能力，一个真 bug。转发路径没动。
+
+### 「仅中转」路由（`relay:` 前缀）
+
+- 之前只能服务「有 baseURL 的 provider」：插件改写配置、把调用方指到本机端口。CLI、别的插件、webhook 这类目标根本没有 baseURL，改不了。
+- 现在 `?op=routes` 可以建一条 `relay:<name>` 路由：只开监听，不碰 `cordis.patch.yml`。调用方把地址换成 `http://127.0.0.1:<端口>`，请求经这里转发，可选走代理。
+- 校验在 `lib/relay-routes.js`：名字合法、目标必须 `host:port`、拒绝私有/回环目标、端口 1024–65535；重发同 id 保留未传的 `proxy` / `tls` / 调优字段。
+- 页面新增「本机中转（不改目标配置）」区块：目标 / 端口 / 代理 / 新建、复制地址、删除、运行状态。
+
+### 路由 CRUD 与批量（`?op=routes`、`?op=batch`）
+
+- `GET ?op=routes` 列出所有路由（带 `kind: provider | relay` 与监听状态）；`POST` 的 `action` 支持 `upsert` / `delete`。provider 行的删除走原有回滚（恢复 `baseURL`），relay 行只停监听。
+- `POST ?op=batch` 最多 20 条 `apply` / `rollback`：**先全量预检**（重复端口、未知代理、非法 id/target、`unknown_route`），再顺序执行；运行时失败会在停下的位置**逆序补偿**已成功的步骤，并返回 `results` 与 `compensated`。
+- 页面：目标行前有复选框，勾选后出现「批量应用 / 批量撤销 / 清除选择」。
+- 契约快照新增三个错误码：`unknown_route` 404、`no_actions` 400、`loopback_target` 400。
+
+### 修掉两个静默失败
+
+- 客户端 `refreshSoon()` 的去抖定时器里调用的是**它自己**，于是安静刷新无限自递归、永远到不了宿主：应用/回滚后表格状态不更新，正是 0.5.3 想修的那个症状。现在调用 `refreshAll({ quiet: true })`。
+- `callRaw` 失败时只抛 `message`，把 `error` 码与 `payload` 丢掉了；批量的 502 带着 `results`/`compensated`，页面现在能显示「停下后回退了几条」。
+
+### 测试
+
+- 新增 `test/routes-crud.test.mjs`（9 条）：relay 路由建/改/删、不碰配置文件、同端口重复应用幂等、私有目标与未知代理被拒、批量应用+撤销、预检挡重复端口、运行时失败补偿、写操作仍需页面意图。
+- `test/client.test.mjs` 增 3 条静态断言（新 op 被调用、去抖不再自递归、错误码与 payload 保留）；`test/contract.test.mjs` 增加三个错误码与 `?op=routes` 列表断言。
+- 全量 **94 条 / 19 套件**。
+
 ## 0.9.1
 
 发布工程版本：不改用户可见的转发行为，只把「装上去能不能用」变成可重复的检查。

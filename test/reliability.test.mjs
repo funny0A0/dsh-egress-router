@@ -177,9 +177,10 @@ test('U1/U2/C2: the client probes its loader, aborts stale refreshes and exposes
   assert.match(source, /seq !== refreshSeq/)
   assert.match(source, /AbortController/)
   assert.match(source, /refreshController\.abort\(\)/)
-  // Bursts collapse into one request.
+  // Bursts collapse into one request. 0.10.0: the timer used to call refreshSoon() again,
+  // so a quiet refresh re-armed forever and never reached the host.
   assert.match(source, /function refreshSoon\(\)/)
-  assert.equal(source.includes('refreshAll({ quiet: true })'), false)
+  assert.match(source, /refreshAll\(\{ quiet: true \}\)/)
   // Every write button is disabled while a write is in flight.
   assert.match(source, /disabled: anyBusy/)
   assert.match(source, /aria-busy/)
