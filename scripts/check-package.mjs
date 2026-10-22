@@ -1,7 +1,7 @@
 // Release gate: what npm would publish, checked against the manifest's promise.
 // Required files must be present; working files must not be; the tarball stays small.
 import fs from 'node:fs'
-import { spawnSync } from 'node:child_process'
+import { describeNpm, npmSync } from './npm-run.mjs'
 
 const REQUIRED = [
   'package.json',
@@ -22,9 +22,9 @@ const REQUIRED = [
 const FORBIDDEN = [/^test\//, /^preview\//, /\.tgz$/, /^REVIEW-/, /^PROMPT-/, /^node_modules\//, /\.bak$/, /^\.git\//]
 const MAX_BYTES = 2 * 1024 * 1024
 
-const result = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { encoding: 'utf8', shell: process.platform === 'win32' })
+const result = npmSync(['pack', '--dry-run', '--json', '--ignore-scripts'], { encoding: 'utf8' })
 if (result.status !== 0) {
-  console.error('npm pack --dry-run failed:\n' + (result.stderr || result.stdout))
+  console.error('npm pack --dry-run failed (' + describeNpm() + '):\n' + (result.error ? result.error.message : (result.stderr || result.stdout)))
   process.exit(1)
 }
 const parsed = JSON.parse(result.stdout)

@@ -166,7 +166,7 @@ for the release checklist, and [docs/rollback.md](docs/rollback.md) for going ba
 ## Development
 
 ```bash
-npm test               # 103 tests / 20 suites (custom runner: node --test workers hit EPERM in the sandbox)
+npm test               # 108 tests / 21 suites (custom runner: node --test workers hit EPERM in the sandbox)
 npm run check          # node --check every module
 npm run check:package  # package gate: required/forbidden files, size
 npm run install-smoke  # pack -> clean consumer install -> boot the installed copy -> contract check

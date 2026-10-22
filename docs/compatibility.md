@@ -35,8 +35,10 @@ profileRoot 少上溯一层，这三类事故它都会红，而源码树测试�
 | --- | --- | --- |
 | 安装布局（hoisted vs pnpm `.pnpm/<pkg>@<ver>`） | `findProfileRoot()` 从插件目录向上找「`package.json` 里带 `dsh.profile`」的目录，并回退到「dependencies 里有本插件」的目录，不数 `..` | `test/host-contract.test.mjs`、`install-smoke` |
 | Windows 文件名禁用字符（`:`、`.`、`\`） | 备份文件名把 `:`、`.` 换成 `-`；备份落在 `storages/egress-router/backups/` | `test/platform.test.mjs` |
-| 换行（CRLF vs LF） | 状态文件与补丁备份一律 LF；`.env` 只按行精确匹配自己写过的行 | `test/platform.test.mjs`、`test/reliability.test.mjs` |
-| `npm` 可执行形态（Windows `.cmd` 不能直接 `execFileSync`） | 安装冒烟优先用 `node <npm-cli.js>`，找不到才退回 `npm` + `shell` | `scripts/install-smoke.mjs`（三平台 CI 实跑） |
+| 换行（CRLF vs LF） | 改写配置时保留原文件换行（CRLF 文件写回仍是 CRLF）；状态文件一律 LF | `test/platform.test.mjs`、`test/cross-platform.test.mjs` |
+| `npm` 可执行形态（Windows `.cmd`、Node 解压包的 `lib/node_modules`、corepack） | `scripts/npm-run.mjs` 依次找 `node_modules/npm`、`lib/node_modules/npm`、`share/nodejs/npm` 下的 `npm-cli.js`，都找不到才退回 PATH 上的 `npm` | `test/cross-platform.test.mjs`、三平台 CI |
+| 路径含空格或非 ASCII（中文用户名、`Application Support` 一类目录） | 全程 `path.join`，不拼字符串；临时目录测试直接取名带空格与中文 | `test/cross-platform.test.mjs` |
+| 目标是 IPv6 字面量 | `isTarget`/`buildRelayRoute` 接受 `[v6]:port`，拒绝 `[::1]` 与私网地址 | `test/cross-platform.test.mjs`、`test/routes-crud.test.mjs` |
 
 运行环境随契约一起写进状态，报兼容性问题时请附上：
 
@@ -83,5 +85,6 @@ profileRoot 少上溯一层，这三类事故它都会红，而源码树测试�
 | --- | --- | --- |
 | 2026-10-21 | Windows 11 家庭版 10.0.26300、Node 24.15.0、DSH 0.2.1-rc.2 | 26 键 state、两条路由（gemini 8792/clash、openrouter 8791/clash）、`schemaOk=true`、诊断包脱敏、上游探测可用 |
 | 2026-10-21 | ubuntu-latest / macos-latest（GitHub Actions） | 测试与安装冒烟通过；未做桌面联调 |
+| 2026-10-22 | WSL Ubuntu 26.04、Node v22.23.4（Windows 侧解压的 Linux tarball） | 21 个测试文件全通过、`check-syntax` 26 文件 0 失败；`check:package` 在缺少 `npm` 可执行文件的解压布局里由 `scripts/npm-run.mjs` 兼容 |
 
 新平台接入时：先跑 `npm run install-smoke`（证明包能装、能启动），再在真机上开设置页确认标签页与按钮，最后把结果补进上表。

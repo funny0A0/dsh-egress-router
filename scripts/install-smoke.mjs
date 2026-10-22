@@ -8,7 +8,7 @@
  *
  * Runs on Windows, Linux and macOS in CI; no DSH installation is required.
  */
-import { execFileSync } from 'node:child_process'
+import { npmExec } from './npm-run.mjs'
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
@@ -18,16 +18,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 // Windows cannot execFileSync('npm.cmd') (EINVAL); run npm's JS entry with the current node
 // instead, which behaves the same on all three platforms and needs no shell quoting.
-const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'egress-install-smoke-'))
 const log = (line) => console.log('[install-smoke] ' + line)
 
 function run(args, options = {}) {
   const cwd = options.cwd ?? root
   const stdio = ['ignore', 'pipe', 'pipe']
-  if (fs.existsSync(npmCli)) return execFileSync(process.execPath, [npmCli, ...args], { cwd, encoding: 'utf8', stdio })
-  return execFileSync(npm, args, { cwd, encoding: 'utf8', stdio, shell: process.platform === 'win32' })
+  // Same resolver as check-package: npm may be a JS entry, a .cmd shim, or not on PATH at all.
+  return npmExec(args, { cwd, encoding: 'utf8', stdio })
 }
 
 // 1. Pack exactly what would be published.

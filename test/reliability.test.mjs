@@ -14,7 +14,7 @@ import path from 'node:path'
 import { RelayManager } from '../lib/manager.js'
 import { noteRepairs, resetThrottle } from '../lib/reconcile.js'
 import { cleanupManagedEnv } from '../lib/bots.js'
-import { readState, recordError, resetErrorLog, safe } from '../lib/store.js'
+import { readState, recordError, resetErrorLog } from '../lib/store.js'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 
@@ -104,8 +104,6 @@ test('R2: recordError keeps the last failure and one audit line per scope per mi
     recordError('demo-op', new Error('boom again'))
     assert.equal(lines(), 1, 'a failing loop must not flush the audit trail')
     assert.equal(readState().lastError.message, 'boom again')
-    assert.equal(safe('demo-safe', () => { throw new Error('nope') }, 'fallback'), 'fallback')
-    assert.equal(readState().lastError.scope, 'demo-safe')
   } finally {
     restore()
   }

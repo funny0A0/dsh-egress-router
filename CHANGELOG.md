@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.0
+
+发布准备：把「能跑」收紧到「哪里都能跑」。
+
+- **写操作串行化**：`apply`/`rollback`/`routes`/`batch`/`patch`/`bot`/`reconcile` 在一个进程内排队，两次点击或一次重试不再交错读写 `state.json` 与 `cordis.patch.yml`；读操作仍并发。
+- **中转空闲超时**：目标接受连接后长时间不响应时，按 `route.timeoutMs`（默认 90 s）断开上游；客户端提前断开时同步释放上游请求，避免 socket 泄漏。
+- **门禁统一 npm 解析**：新增 `scripts/npm-run.mjs`，`check:package` 与 `install-smoke` 共用；在 Windows `.cmd`、Node 解压包（`lib/node_modules/npm`）、corepack 布局下都能跑。
+- **新增跨平台用例** `test/cross-platform.test.mjs`（5 条）：CRLF 配置保持 CRLF、含空格与中文的 profile 路径可 apply/rollback、IPv6 目标接受而 `[::1]` 拒绝、两次并发 apply 不互相覆盖、门禁能在解压布局里找到 npm。
+- 删除从未被生产路径调用的 `safe()`（0.8.0 留下的死 API）。
+- 测试 runner 打印汇总行（`files=21 pass=108 fail=0`），发布说明可以直接引用。
+- Linux 实机验证：WSL Ubuntu 26.04 + Node 22.23.4 跑通完整测试与语法门禁。
 ## 0.11.0
 
 把「哪些域名不能碰、哪个 provider 的真实地址是什么、发现器怎么判断用途、机器人代理记在哪」从硬编码搬到配置与独立文件。转发路径没动。

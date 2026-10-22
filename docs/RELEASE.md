@@ -116,4 +116,4 @@ pnpm add file:<绝对路径>/dsh-egress-router-<上一个版本>.tgz
 | 文件锁 | 已关闭的句柄才能删除；用 `tmp + rename` | 同 | 同 |
 | 大小写 | 不敏感（`DeepSeek Harness.exe` 被 360 盯上过） | 敏感 | 默认不敏感 |
 | 换行 | CRLF 检出，插件写 LF | LF | LF |
-| 安装冒烟 | `node <npm-cli.js>` | `npm` | `npm` |
+| npm 解析 | `scripts/npm-run.mjs` 统一解析：先找 `npm-cli.js`，最后退回 PATH 上的 `npm` | 同左 | 同左 |

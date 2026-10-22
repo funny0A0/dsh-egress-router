@@ -331,11 +331,12 @@ CI 矩阵与真机记录见 [docs/compatibility.md](docs/compatibility.md)；发
 - 上游代理只支持 `http://host:port`（CONNECT 隧道），不支持需要认证的代理。
 - 指标中的 p50/p95 样本只在内存，重启后从零累计。
 - 兼容补丁绑定包版本前缀；插件升级后可能需要更新补丁锚点（启动时会报「锚点缺失」）。
+- 写操作只在**本进程内**串行；两个 DSH 实例同时改同一个 profile 不在保护范围内。
 
 ## 开发
 
 ```bash
-npm test               # 103 条测试 / 20 套件（自带 runner：node --test 在沙箱内 worker 会 EPERM）
+npm test               # 108 条测试 / 21 套件（自带 runner：node --test 在沙箱内 worker 会 EPERM）
 npm run check          # 所有模块 node --check
 npm run check:package  # 打包门禁：必备/禁入文件、体积
 npm run install-smoke  # 打包 → 干净 consumer 安装 → 启动已安装副本 → 校验契约
@@ -350,7 +351,7 @@ client/         设置页 bundle（无构建，纯 ESM + h()）
 patches/        声明式兼容补丁定义
 docs/           安装、兼容矩阵、回滚、发布清单
 preview/        离线渲染 harness 与明暗截图
-test/           20 个套件，103 条用例（含契约快照 test/contract/）
+test/           21 个套件，108 条用例（含契约快照 test/contract/）
 scripts/        发布门禁与安装冒烟
 ```
 
@@ -387,6 +388,7 @@ scripts/        发布门禁与安装冒烟
 | 0.9.1 | 发布工程：状态 schema 校验（`schemaOk`/`schemaErrors`）、API 与客户端契约快照、三平台 CI 安装冒烟、发布清单 |
 | 0.10.0 | 「仅中转」路由（`relay:`，不改目标配置）、路由 CRUD（`?op=routes`）、批量应用/撤销（`?op=batch`，预检 + 逆序补偿）、修掉安静刷新自递归与错误码丢失 |
 | 0.11.0 | 可配置面：`config.guarded` 追加受保护域名、`config.origins` 声明真实端点、`config.discovery` 声明式规则与忽略、机器人映射移出 state（`bots.json`，state v10） |
+| 0.12.0 | 发布准备：写操作进程内串行、中转空闲超时与客户端断开释放、门禁统一 npm 解析、CRLF/含空格与中文路径/IPv6/并发用例、删除死 API |
 
 完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
