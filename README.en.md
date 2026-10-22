@@ -83,7 +83,7 @@ provider baseURL -> http://127.0.0.1:8792/... -> RelayManager (http.Server on 12
                 -> CONNECT tunnel -> upstream proxy (optional, e.g. clash) -> target
 ```
 
-Routes live in `$DSH_HOME/storages/egress-router/state.json` (`version: 9`,
+Routes live in `$DSH_HOME/storages/egress-router/state.json` (`version: 10`,
 `schemaVersion: 1`), not in `cordis.patch.yml`; the config only carries `proxies`.
 
 ## API
@@ -166,7 +166,7 @@ for the release checklist, and [docs/rollback.md](docs/rollback.md) for going ba
 ## Development
 
 ```bash
-npm test               # 94 tests / 19 suites (custom runner: node --test workers hit EPERM in the sandbox)
+npm test               # 103 tests / 20 suites (custom runner: node --test workers hit EPERM in the sandbox)
 npm run check          # node --check every module
 npm run check:package  # package gate: required/forbidden files, size
 npm run install-smoke  # pack -> clean consumer install -> boot the installed copy -> contract check

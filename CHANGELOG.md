@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.11.0
+
+把「哪些域名不能碰、哪个 provider 的真实地址是什么、发现器怎么判断用途、机器人代理记在哪」从硬编码搬到配置与独立文件。转发路径没动。
+
+### `config.guarded`：追加受保护域名
+
+- 内置 5 条（`platform.deepseek.com`、`api.deepseek.com`、`registry.npmjs.org`、`awesome-dsh-plugin.com`、`dsh-plugin-catalog`）保留，现在可以把自建 SSO、内部 registry 之类追加进来。
+- 写法宽松：可以给 host，也可以给 URL（自动归一成 host）；匹配包含子域名，`evil-sso.example.test` 不会误中 `sso.example.test`。
+- 受保护行仍只在页面列出、不给「应用」；`source` 注明来自内置还是配置。
+
+### `config.origins`：声明 provider 的真实端点
+
+- 回环恢复原来的兜底只有 4 个内置 provider。现在可以在配置里声明任意 provider 的公网地址，账本为空时也能把 `baseURL` 从 `127.0.0.1:<port>` 救回来。
+- 优先级：路由记录 → 备份账本 → `config.origins` → 内置端点；声明值必须是 http(s) 绝对地址，回环值被拒。
+
+### `config.discovery`：声明式发现规则
+
+- `rules[]` 的 `match` 支持 `id`（尾部 `*` 前缀）、`kind`、`host`、`hostSuffix`、`urlIncludes`，多条件 AND，同一行第一条命中即停止。
+- 可覆盖 `kind` / `name` / `patchable` / `guarded` / `confidence` / `note`；`ignore[]` 直接隐藏某些 host。
+- `?op=discover` 返回 `rulesApplied` 与 `guardedHosts`，被改写的行带 `rule: <id>`；`patchable` 的默认推断只在规则没表态时生效（之前统一按 `kind === "llm"` 赋值，会把规则的 `patchable: false` 覆盖掉）。
+
+### 机器人映射移到 `bots.json`（state v10）
+
+- `state.json` 不再存 `bots{}`，改存同目录 `bots.json`（`{ version: 1, updatedAt, bots }`）。重装插件、重置状态不会连带丢机器人代理。
+- 旧状态首次读取时自动迁移一次并从 `state.json` 删除该字段，迁移失败会写 `bots-migrate` 到审计。
+- `lib/schema.js` 的 `STATE_VERSION` 升到 10，`TOP_LEVEL` 去掉 `bots`；旧文件仍按版本链迁移。
+
+### 测试与文档
+
+- 新增 `test/config-surface.test.mjs` 9 条：guarded 归一/子域匹配/伪后缀、受保护行与 provider 标记、规则改名与 veto、ignore、`applyRules` 五种 match、origins 兜底、`bots.json` 读写、v9→v10 迁移、v10 校验。
+- 全套 103 条 / 20 套件；契约快照 `stateVersion` 升 10（`?op=state` 仍是 26 键，`bots` 行改由 `bots.json` 提供）。
+- README 新增四节配置说明（`guarded` / `origins` / `discovery` / `bots.json`）与 0.11.0 版本行；README.en 同步版本与测试数。
 ## 0.10.0
 
 两条新能力，一个真 bug。转发路径没动。

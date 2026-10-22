@@ -121,7 +121,7 @@ const OK_VERIFY = async () => ({ ok: true, via: 'direct', error: null })
 
 // ---------------------------------------------------------------- R1: schema version
 
-test('R1 state upgrades v2 -> v9 and keeps routes', withHome(async () => {
+test('R1 state upgrades v2 -> v10 and keeps routes', withHome(async () => {
   fs.mkdirSync(stateDir(), { recursive: true })
   fs.writeFileSync(statePath(), JSON.stringify({
     version: 2,
@@ -129,21 +129,22 @@ test('R1 state upgrades v2 -> v9 and keeps routes', withHome(async () => {
     backups: [{ routeId: 'llm:gemini', backup: 'x.bak' }],
   }))
   const state = readState()
-  assert.equal(state.version, 9)
+  assert.equal(state.version, 10)
   assert.deepEqual(state.metrics, {})
   assert.deepEqual(state.metricsTotals, {})
   assert.deepEqual(state.patches, {})
-  assert.deepEqual(state.bots, {})
+  // v10 moved the bot map to bots.json: an old document must not keep a second copy.
+  assert.equal(Object.prototype.hasOwnProperty.call(state, 'bots'), false)
   assert.deepEqual(state.reconcilePaused, {})
   assert.equal(state.schemaVersion, 1)
   assert.equal(state.routes.length, 1)
   assert.equal(state.backups[0].sha256After, null)
-  assert.equal(JSON.parse(fs.readFileSync(statePath(), 'utf8')).version, 9)
+  assert.equal(JSON.parse(fs.readFileSync(statePath(), 'utf8')).version, 10)
 }))
 
 test('R1 writeState stamps the current version even when the caller is stale', withHome(async () => {
   writeState({ version: 2, routes: [] })
-  assert.equal(JSON.parse(fs.readFileSync(statePath(), 'utf8')).version, 9)
+  assert.equal(JSON.parse(fs.readFileSync(statePath(), 'utf8')).version, 10)
 }))
 
 // ---------------------------------------------------------------- R4: probe scope

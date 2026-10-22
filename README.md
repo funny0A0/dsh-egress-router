@@ -163,6 +163,20 @@ Invoke-RestMethod "http://127.0.0.1:8792/__health"
 
 > 不要写 `name: dsh-egress-router`：`bundles` 已经加载了本插件，再写 `name` 会被当成第二个实例。
 
+### 受保护域名与已知端点（0.11.0）
+
+```yaml
+- id: egress-router
+  config:
+    guarded:
+      - sso.mycorp.test                      # 追加到内置清单
+    origins:
+      acme: https://gateway.acme.test/v2     # provider → 真实公网端点
+```
+
+- `guarded`：内置 `platform.deepseek.com`、`api.deepseek.com`、`registry.npmjs.org`、`awesome-dsh-plugin.com`、`dsh-plugin-catalog`。追加项与内置项一样，只在页面列出、不提供改写。写成 URL（`https://sso.mycorp.test/login`）也可以，会自动归一成 host；匹配包含子域名，但不匹配 `evil-sso.mycorp.test` 这类伪后缀。
+- `origins`：当账本里没有某个 provider 的原始地址时用它兜底（刚换机器、备份被清空、历史路由已被撤销都可能发生）。恢复回环路由时优先级是：路由记录 → 备份账本 → `config.origins` → 内置端点（openrouter / gemini / moonshot / deepseek）。
+
 ### 本机中转（relay 路由，0.10.0）
 
 没有 `baseURL` 的目标（CLI、别的插件、webhook、抓取脚本）改不了配置，但仍然可以走本机端口：
@@ -177,9 +191,36 @@ curl -s -X POST "http://127.0.0.1:<GUI 端口>/plugins/egress-router?op=routes" 
 
 页面上的「本机中转（不改目标配置）」区块就是这两个调用的界面版：填目标与端口、选代理、点「新建中转」，之后可复制地址或删除。
 
+### `config.discovery`：声明式发现规则（0.11.0）
+
+发现器默认用 `baseURL`、包依赖与已知供应商来推断用途。推断不准时不必等上游支持，写规则覆盖：
+
+```yaml
+- id: egress-router
+  config:
+    discovery:
+      ignore:
+        - telemetry.example.com
+      rules:
+        - id: internal-api
+          match: { hostSuffix: corp.test }
+          kind: custom            # llm | im | other | custom
+          name: 内部网关
+          confidence: certain     # certain | probable | low
+          note: 走网关才能出网
+        - id: no-apply
+          match: { id: "llm:gemini" }
+          patchable: false
+```
+
+- `match` 字段：`id`（尾部 `*` 作前缀匹配）、`kind`、`host`、`hostSuffix`（自动去掉前导 `*.`）、`urlIncludes`；同一行的多个条件是 AND。
+- 同一行命中第一条规则就停止，可覆盖 `kind` / `name` / `patchable` / `guarded` / `confidence` / `note`。
+- `ignore` 里的 host 直接不出现；想「看得见但不动」请用 `guarded`。
+- `?op=discover` 的响应用 `rulesApplied` 报告命中条数，被规则改过的行带 `rule: <id>`。
+
 ### `$DSH_HOME/storages/egress-router/state.json`
 
-`version: 9`、`schemaVersion: 1`。主要字段：
+`version: 10`、`schemaVersion: 1`。主要字段：
 
 | 字段 | 说明 |
 | --- | --- |
@@ -189,11 +230,12 @@ curl -s -X POST "http://127.0.0.1:<GUI 端口>/plugins/egress-router?op=routes" 
 | `metricsTotals{}` | 跨重启累计的 `requests / bytesIn / bytesOut / errors` 与首次计数时间 `since` |
 | `backups[]` | 配置备份账本（最多 20 条），回滚依据 |
 | `patches{}` | 补丁账本（自修复只处理这里记录过的） |
-| `bots{}` | 机器人 → 代理映射（启动时注入进程环境变量） |
 | `history[]` | 审计流水（最多 50 条，重复行 60s 内折叠） |
 | `hostContract` / `hostEnv` | 宿主接受的注册形状与当时的平台/Node 版本 |
 | `schemaVersion` | 状态文档的对外形状版本（当前 1），由 `lib/schema.js` 校验；`?op=state` 的 `schemaOk` 为 false 时页面会显示具体字段 |
 | `reconcilePaused{}` | 漂移自愈的暂停窗口（原因 + 到期时间） |
+
+> `bots{}` 从 v10 起移到同目录的 `bots.json`（`{ version: 1, updatedAt, bots }`），旧 `state.bots` 会在首次启动时自动迁移一次。机器人映射单独成文件，重装插件或重置状态时不会误丢。
 
 ### 机器人代理与环境变量
 
@@ -201,7 +243,7 @@ curl -s -X POST "http://127.0.0.1:<GUI 端口>/plugins/egress-router?op=routes" 
 （0.7.1 曾这样做，导致桌面版与 Web 版同时无法启动），所以代理只做两件事：
 
 1. 应用时注入 `process.env`，当前会话立即生效；
-2. 记录在 `state.bots`，下次启动由插件在本进程重新注入。
+2. 记录在 `bots.json`，下次启动由插件在本进程重新注入。
 
 如果你希望变量在 DSH 启动**之前**就存在（例如别的进程也要用），请设置操作系统环境变量：
 
@@ -227,7 +269,7 @@ export DSH_TELEGRAM_PROXY=http://127.0.0.1:7897
 | `state` | GET | 页面所需的全部状态（26 个键，含 `apiVersion: 1` 与 `schemaOk` / `schemaErrors`；键集合锁定在 `test/contract/api-surface.json`） |
 | `diagnose` | GET | 脱敏现场包（代理 userinfo、机器人地址、备份路径都已处理） |
 | `upstream` | POST | 逐路由探一次上游链路（用该路由自己的代理，6s 超时） |
-| `discover` | GET | 重新扫描目标并缓存 |
+| `discover` | GET | 重新扫描目标并缓存；响应含 `rulesApplied` 与 `guardedHosts`（`config.discovery` / `config.guarded` 生效时） |
 | `probe` | POST | 探活；接受已扫描到的目标与 `config.targets`，拒绝私有地址 |
 | `plan` | POST | 只算 diff / 端口 / 警告，不写文件 |
 | `ports` | GET | `?op=ports&port=8791&port=8792` 批量查占用 |
@@ -293,7 +335,7 @@ CI 矩阵与真机记录见 [docs/compatibility.md](docs/compatibility.md)；发
 ## 开发
 
 ```bash
-npm test               # 94 条测试 / 19 套件（自带 runner：node --test 在沙箱内 worker 会 EPERM）
+npm test               # 103 条测试 / 20 套件（自带 runner：node --test 在沙箱内 worker 会 EPERM）
 npm run check          # 所有模块 node --check
 npm run check:package  # 打包门禁：必备/禁入文件、体积
 npm run install-smoke  # 打包 → 干净 consumer 安装 → 启动已安装副本 → 校验契约
@@ -303,12 +345,12 @@ npm run version        # 校验版本号在 README 与 CHANGELOG 都有记录
 目录：
 
 ```
-lib/            插件后端（入口、manager、relay、discovery、patcher、routes、store、bots、patches、reconcile、probe、ports、schema）
+lib/            插件后端（入口、manager、relay、relay-routes、discovery、patcher、routes、store、bots、patches、reconcile、probe、ports、schema）
 client/         设置页 bundle（无构建，纯 ESM + h()）
 patches/        声明式兼容补丁定义
 docs/           安装、兼容矩阵、回滚、发布清单
 preview/        离线渲染 harness 与明暗截图
-test/           19 个套件，94 条用例（含契约快照 test/contract/）
+test/           20 个套件，103 条用例（含契约快照 test/contract/）
 scripts/        发布门禁与安装冒烟
 ```
 
@@ -344,6 +386,7 @@ scripts/        发布门禁与安装冒烟
 | 0.9.0 | 可观测：指标跨重启累计（`state` v9）、脱敏诊断包、`config.targets` 自定义端点、上游健康体检、`apiVersion` |
 | 0.9.1 | 发布工程：状态 schema 校验（`schemaOk`/`schemaErrors`）、API 与客户端契约快照、三平台 CI 安装冒烟、发布清单 |
 | 0.10.0 | 「仅中转」路由（`relay:`，不改目标配置）、路由 CRUD（`?op=routes`）、批量应用/撤销（`?op=batch`，预检 + 逆序补偿）、修掉安静刷新自递归与错误码丢失 |
+| 0.11.0 | 可配置面：`config.guarded` 追加受保护域名、`config.origins` 声明真实端点、`config.discovery` 声明式规则与忽略、机器人映射移出 state（`bots.json`，state v10） |
 
 完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
