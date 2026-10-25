@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.0
+
+第三方供应商的「只写模型、不写端点」问题：导入的 provider 只有 `models` 与 `apiKeyEnv` 时，页面原来只能显示 `—`，所有端口/代理/应用控件都不渲染。转发路径没动，改的是「从哪里知道端点」。
+
+- **端点解析链**：新增 `lib/provider-catalog.js`。顺序为 配置字面值 → 本插件记录（路由 `originBaseURL`/备份）→ `config.providerDefaults` → 宿主 pi-ai 目录 → 内置 17 项公共端点。`readProviderCatalog()` 在 Electron 之外也能读 `app.asar`：按 asar 头（偏移 16 起 JSON、偏移 12 记长度）直接取条目，因此 `dsh web` 与 CI 与桌面版解析同一份数据。
+- **发现结果带来源**：`?op=discover` 的行新增 `endpointSource`（`config`/`ledger`/`providerDefaults`/`catalog`/`builtin`）与 `configuredBaseURL`；命中后 3–5 的 provider 现在有 `target`，端口/代理/预检/应用/测试全部可用。
+- **应用可补写字段**：`planApply` 不再对无 `baseURL` 的 provider 报 `no_base_url`；它用同一条解析链得到种子地址，`commitApply` 通过外科写入补上 `baseURL`，缺 `api` 时一并补上，备份账本记录 `insertApi`，回滚按备份文件字节还原。
+- **回环恢复更强**：`knownOriginTarget` 在账本为空时可以用宿主目录/声明的默认端点重建地址，不再只有 4 个内置 provider。
+- **诊断可见**：`?op=diagnose` 增加 `config.providerDefaults` 与 `catalog: { builtin, dirs, first }`，反馈问题能看出用了哪份目录。
+- **界面**：命中解析链的行显示「端点来自内置目录 / 内置默认 / 配置默认」徽章，并提示「应用时会把这行 baseURL 写进配置」；中英双语。
+- **测试**：新增 `test/provider-catalog.test.mjs`（8 条）：目录解析、优先级、发现行来源、补写 `baseURL`+`api` 且注释保留、回滚字节还原、回环恢复、无目录时的声明兜底。全套 116 条 / 22 套件。
+
 ## 0.12.0
 
 发布准备：把「能跑」收紧到「哪里都能跑」。

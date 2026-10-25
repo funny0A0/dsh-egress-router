@@ -86,6 +86,19 @@ provider baseURL -> http://127.0.0.1:8792/... -> RelayManager (http.Server on 12
 Routes live in `$DSH_HOME/storages/egress-router/state.json` (`version: 10`,
 `schemaVersion: 1`), not in `cordis.patch.yml`; the config only carries `proxies`.
 
+### Providers without a `baseURL` (0.13.0)
+
+Providers imported through the app usually carry only `models` and `apiKeyEnv`; the host fills
+`baseURL`/`api` at runtime from its bundled pi-ai catalog, so the config file has neither. From
+0.13.0 the plugin resolves the same endpoint in this order: literal `baseURL` in
+`cordis.patch.yml` -> endpoint recorded by this plugin (route/backups) -> `config.providerDefaults`
+-> the host catalog under `pi-ai/dist/providers/data/<provider>.json` (read straight out of
+`app.asar` when Electron's fs patch is absent) -> a built-in table of 17 public endpoints.
+
+Rows resolved from steps 3-5 carry an "endpoint from ..." badge. Apply writes the resolved
+`baseURL` (and a missing `api`) into that provider block, still with a backup and rollback. Rows
+with no resolvable endpoint stay read-only: the plugin never guesses an address.
+
 ## API
 
 `GET|POST http://127.0.0.1:<gui-port>/plugins/egress-router?op=<op>`
@@ -160,13 +173,14 @@ for the release checklist, and [docs/rollback.md](docs/rollback.md) for going ba
 - HTTP/1.1 only: no HTTP/2 cleartext upgrade, no SOCKS, no PAC.
 - Upstream must be an unauthenticated `http://host:port` CONNECT proxy.
 - p50/p95 samples live in memory and restart from zero.
+- Endpoint resolution reads the host catalog; if a future host moves that directory the built-in table is the fallback.
 - Compatibility patches are bound to a package version prefix; after a plugin upgrade the
   anchor may need an update (boot reports "anchor missing").
 
 ## Development
 
 ```bash
-npm test               # 108 tests / 21 suites (custom runner: node --test workers hit EPERM in the sandbox)
+npm test               # 116 tests / 22 suites (custom runner: node --test workers hit EPERM in the sandbox)
 npm run check          # node --check every module
 npm run check:package  # package gate: required/forbidden files, size
 npm run install-smoke  # pack -> clean consumer install -> boot the installed copy -> contract check

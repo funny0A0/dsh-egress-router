@@ -177,6 +177,34 @@ Invoke-RestMethod "http://127.0.0.1:8792/__health"
 - `guarded`：内置 `platform.deepseek.com`、`api.deepseek.com`、`registry.npmjs.org`、`awesome-dsh-plugin.com`、`dsh-plugin-catalog`。追加项与内置项一样，只在页面列出、不提供改写。写成 URL（`https://sso.mycorp.test/login`）也可以，会自动归一成 host；匹配包含子域名，但不匹配 `evil-sso.mycorp.test` 这类伪后缀。
 - `origins`：当账本里没有某个 provider 的原始地址时用它兜底（刚换机器、备份被清空、历史路由已被撤销都可能发生）。恢复回环路由时优先级是：路由记录 → 备份账本 → `config.origins` → 内置端点（openrouter / gemini / moonshot / deepseek）。
 
+### 供应商没有写 `baseURL` 时（0.13.0）
+
+从「第三方模型供应商」导入的 provider 往往只有 `models` 与 `apiKeyEnv`：
+
+```yaml
+      moonshotai-cn:
+        apiKeyEnv: MOONSHOTAI_CN_API_KEY
+        models: [kimi-k2.6]
+```
+
+宿主运行时会用内置 pi-ai 目录补出 `baseURL`/`api`，配置文件里却没有这两个值。0.13.0 起插件按同一顺序解析端点，页面因此仍能显示目标并「应用」：
+
+1. `cordis.patch.yml` 里字面写出的 `baseURL`；
+2. 本插件记录过的真实端点（路由 `originBaseURL`、备份账本）；
+3. `config.providerDefaults.<provider>`（可只写 URL，或写 `{ baseURL, api }`）；
+4. 宿主内置目录 `pi-ai/dist/providers/data/<provider>.json`（桌面版直接读 `app.asar`，`dsh web`/CI 用同一个解析器）；
+5. 内置的公共端点表（deepseek、moonshot、google、openai、anthropic、xai、openrouter 等 17 项）。
+
+命中 3–5 的行带「端点来自…」徽章；点「应用」时插件把解析出的 `baseURL`（必要时连缺少的 `api`）写进该 provider 块，仍然只改这一处、仍然有备份与回滚。解析不到的行保持只读，不会猜地址。
+
+```yaml
+- id: egress-router
+  config:
+    providerDefaults:
+      moonshotai-cn: https://api.moonshot.cn/v1
+      acme: { baseURL: https://gateway.acme.test/v2, api: openai-completions }
+```
+
 ### 本机中转（relay 路由，0.10.0）
 
 没有 `baseURL` 的目标（CLI、别的插件、webhook、抓取脚本）改不了配置，但仍然可以走本机端口：
@@ -336,7 +364,7 @@ CI 矩阵与真机记录见 [docs/compatibility.md](docs/compatibility.md)；发
 ## 开发
 
 ```bash
-npm test               # 108 条测试 / 21 套件（自带 runner：node --test 在沙箱内 worker 会 EPERM）
+npm test               # 116 条测试 / 22 套件（自带 runner：node --test 在沙箱内 worker 会 EPERM）
 npm run check          # 所有模块 node --check
 npm run check:package  # 打包门禁：必备/禁入文件、体积
 npm run install-smoke  # 打包 → 干净 consumer 安装 → 启动已安装副本 → 校验契约
@@ -351,7 +379,7 @@ client/         设置页 bundle（无构建，纯 ESM + h()）
 patches/        声明式兼容补丁定义
 docs/           安装、兼容矩阵、回滚、发布清单
 preview/        离线渲染 harness 与明暗截图
-test/           21 个套件，108 条用例（含契约快照 test/contract/）
+test/           22 个套件，116 条用例（含契约快照 test/contract/）
 scripts/        发布门禁与安装冒烟
 ```
 
@@ -389,6 +417,7 @@ scripts/        发布门禁与安装冒烟
 | 0.10.0 | 「仅中转」路由（`relay:`，不改目标配置）、路由 CRUD（`?op=routes`）、批量应用/撤销（`?op=batch`，预检 + 逆序补偿）、修掉安静刷新自递归与错误码丢失 |
 | 0.11.0 | 可配置面：`config.guarded` 追加受保护域名、`config.origins` 声明真实端点、`config.discovery` 声明式规则与忽略、机器人映射移出 state（`bots.json`，state v10） |
 | 0.12.0 | 发布准备：写操作进程内串行、中转空闲超时与客户端断开释放、门禁统一 npm 解析、CRLF/含空格与中文路径/IPv6/并发用例、删除死 API |
+| 0.13.0 | 端点解析：第三方供应商未写 `baseURL` 时按「配置 → 记录 → `config.providerDefaults` → 宿主 pi-ai 目录 → 内置表」解析，应用时补齐 `baseURL`/`api`，行上标注来源 |
 
 完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
