@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.13.1
+
+Fix the regression 0.13.0 introduced when writing `api` for imported providers.
+
+### Why it broke
+
+`llm-pi-ai` only accepts `openai-completions`, `openai-responses` and `anthropic-messages` in its
+settings schema. Names such as `google-generative-ai` only exist inside the host pi-ai catalog, and
+a provider the catalog implements must leave `api` absent so the host can reuse it. 0.13.0 copied
+the catalog name into `cordis.patch.yml`; the whole `llm-pi-ai` entry then failed schema validation,
+so every provider card and the "add provider" form disappeared.
+
+### Changes
+
+- `lib/provider-catalog.js`: `CORE_APIS`, `isCoreApi()`, `hasCatalogProvider()`; the resolver now
+  always reports `reuseCatalog` and `catalogApi` so callers can avoid writing `api`.
+- `lib/patcher.js`: only a provider the host catalog cannot implement gets a new `api`, and only
+  when the value is one of the three accepted names; `providerDefaults.<key>.api` outside that set
+  is a 400 `unsupported_api`; every skipped value is returned as a plan warning.
+- `lib/patcher.js`: `repairInvalidApis()` removes an invalid `api` line when the host catalog knows
+  the provider, backs the file up first and leaves unknown providers untouched.
+- `lib/index.js`: runs that repair on boot, before the reconcile watcher, and records
+  `config-repair` in history.
+- `lib/discovery/index.js`: rows expose `api` (only what the config says), `catalogApi` and
+  `reuseCatalog`.
+- `client/client.js`: catalog-backed rows explain that apply rewrites only `baseURL`, in both
+  languages.
+
+### Tests
+
+119 tests in 22 suites; the catalog suite covers the regression (a catalog protocol name is
+refused, apply adds no `api`, boot repair deletes only the offending line).
 ## 0.13.0
 
 第三方供应商的「只写模型、不写端点」问题：导入的 provider 只有 `models` 与 `apiKeyEnv` 时，页面原来只能显示 `—`，所有端口/代理/应用控件都不渲染。转发路径没动，改的是「从哪里知道端点」。

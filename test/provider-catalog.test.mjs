@@ -10,11 +10,12 @@ import yaml from 'js-yaml'
 import {
   builtinEndpoints,
   catalogCandidates,
+  isCoreApi,
   readProviderCatalog,
   resolveProviderEndpoint,
 } from '../lib/provider-catalog.js'
 import { discover } from '../lib/discovery/index.js'
-import { commitApply, knownOriginTarget, planApply, rollbackLast, findProvider } from '../lib/patcher.js'
+import { commitApply, knownOriginTarget, planApply, repairInvalidApis, rollbackLast, findProvider } from '../lib/patcher.js'
 
 function tmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix))
@@ -47,6 +48,21 @@ function withCatalogDir(fn) {
     },
   }
   fs.writeFileSync(path.join(dir, 'moonshotai-cn.json'), JSON.stringify(catalog))
+  // A catalog entry whose protocol name is NOT one llm-pi-ai's settings schema accepts.
+  // Writing this value into a provider block is exactly the 0.13.0 regression.
+  const google = {
+    'google-generative-ai': {
+      'chat:gemini-3.8-flash': {
+        id: 'gemini-3.8-flash',
+        name: 'Gemini 3.8 Flash',
+        api: 'google-generative-ai',
+        provider: 'google',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        type: 'chat',
+      },
+    },
+  }
+  fs.writeFileSync(path.join(dir, 'google.json'), JSON.stringify(google))
   const previous = process.env.EGRESS_PI_AI_DIR
   process.env.EGRESS_PI_AI_DIR = dir
   return Promise.resolve()
@@ -127,7 +143,9 @@ test('discovery gives an imported provider a target and marks the endpoint sourc
     assert.equal(row.baseURL, 'https://api.moonshot.cn/v1')
     assert.equal(row.target, 'api.moonshot.cn:443')
     assert.equal(row.endpointSource, 'catalog')
-    assert.equal(row.api, 'openai-completions')
+    assert.equal(row.api, null, 'the row does not claim a protocol it never wrote')
+    assert.equal(row.catalogApi, 'openai-completions')
+    assert.equal(row.reuseCatalog, true, 'the host owns this provider, so api must stay absent')
     assert.equal(row.patchable, true, 'the row now offers apply in the UI')
     const mystery = result.items.find((item) => item.id === 'llm:mystery')
     assert.equal(mystery.target, null, 'unknown providers stay read-only')
@@ -147,7 +165,7 @@ test('config.providerDefaults wins over the catalog in discovery', () => {
   })
 })
 
-test('apply inserts baseURL and api for a provider that had neither, and rollback restores it', () => {
+test('apply writes only baseURL for a catalog-backed provider and rollback restores it', () => {
   return withHome(() => withCatalogDir(async () => {
     const dir = importedProfile()
     const file = path.join(dir, 'cordis.patch.yml')
@@ -160,17 +178,76 @@ test('apply inserts baseURL and api for a provider that had neither, and rollbac
     })
     assert.equal(plan.before, null)
     assert.equal(plan.after, 'http://127.0.0.1:8899/v1')
-    assert.equal(plan.insertApi, 'openai-completions')
+    // 0.13.1: llm-pi-ai's schema accepts only three protocol names and a catalog-backed
+    // provider must leave `api` absent, so this write must not add one.
+    assert.equal(plan.insertApi, null)
     const written = commitApply({ profileDir: dir, plan })
     assert.equal(written.format, 'surgical')
     const parsed = yaml.load(fs.readFileSync(file, 'utf8'))
     const provider = findProvider(parsed, 'moonshotai-cn').provider
     assert.equal(provider.baseURL, 'http://127.0.0.1:8899/v1')
-    assert.equal(provider.api, 'openai-completions')
+    assert.equal(provider.api, undefined, 'no api line is added for a catalog provider')
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /^\s+api:/m)
     assert.match(fs.readFileSync(file, 'utf8'), /# user notes/, 'comments survive the write')
     rollbackLast({})
     assert.equal(fs.readFileSync(file, 'utf8'), original, 'rollback restores the file byte for byte')
   }))
+})
+
+test('a catalog protocol name is rejected instead of written', () => {
+  return withHome(() => withCatalogDir(async () => {
+    const dir = importedProfile()
+    assert.equal(isCoreApi('google-generative-ai'), false)
+    assert.throws(
+      () => planApply({
+        profileDir: dir,
+        itemId: 'llm:moonshotai-cn',
+        listenPort: 8899,
+        target: 'api.moonshot.cn:443',
+        providerDefaults: { 'moonshotai-cn': { baseURL: 'https://api.moonshot.cn/v1', api: 'google-generative-ai' } },
+      }),
+      /unsupported_api|must be one of/,
+    )
+    const plan = planApply({
+      profileDir: dir,
+      itemId: 'llm:moonshotai-cn',
+      listenPort: 8899,
+      target: 'api.moonshot.cn:443',
+      providerDefaults: { 'moonshotai-cn': { baseURL: 'https://api.moonshot.cn/v1', api: 'openai-completions' } },
+    })
+    assert.equal(plan.insertApi, null, 'catalog-backed providers never get an api, even a valid one')
+    assert.match(plan.warnings.join('\n'), /ignored: the host catalog already implements this provider/)
+  }))
+})
+
+test('boot repair removes a catalog protocol name and leaves unknown providers alone', () => {
+  return withHome(() => withCatalogDir(async () => {
+    const dir = importedProfile()
+    const file = path.join(dir, 'cordis.patch.yml')
+    const broken = fs.readFileSync(file, 'utf8')
+      .replace('      mystery:\n', '      google:\n        api: google-generative-ai\n        baseURL: https://generativelanguage.googleapis.com/v1beta\n      mystery:\n')
+    fs.writeFileSync(file, broken)
+    const report = repairInvalidApis({ profileDir: dir })
+    assert.deepEqual(report.removed, [{ key: 'google', api: 'google-generative-ai' }])
+    const after = fs.readFileSync(file, 'utf8')
+    assert.doesNotMatch(after, /google-generative-ai/, 'the offending value is gone')
+    assert.match(after, /google:\n\s+baseURL: https:\/\/generativelanguage\.googleapis\.com\/v1beta/, 'baseURL stays')
+    assert.ok(report.backup && fs.existsSync(report.backup), 'a backup is written before the repair')
+    const doc = yaml.load(after)
+    assert.equal(findProvider(doc, 'google').provider.api, undefined)
+    // An unknown provider keeps its value: deleting it would swap a schema error for a
+    // runtime "this build cannot serve" error.
+    fs.appendFileSync(file, '      unknown-one:\n        api: not-a-protocol\n')
+    const second = repairInvalidApis({ profileDir: dir })
+    assert.deepEqual(second.kept, [{ key: 'unknown-one', api: 'not-a-protocol' }])
+    assert.match(fs.readFileSync(file, 'utf8'), /not-a-protocol/)
+  }))
+})
+
+test('the plugin repairs the file on boot, before anything else reads it', () => {
+  const source = fs.readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
+  assert.match(source, /repairInvalidApis\(\{ profileDir/)
+  assert.match(source, /op: 'config-repair'/)
 })
 
 test('a stuck loopback provider is recoverable from the catalog alone', () => {

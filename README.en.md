@@ -96,8 +96,21 @@ Providers imported through the app usually carry only `models` and `apiKeyEnv`; 
 `app.asar` when Electron's fs patch is absent) -> a built-in table of 17 public endpoints.
 
 Rows resolved from steps 3-5 carry an "endpoint from ..." badge. Apply writes the resolved
-`baseURL` (and a missing `api`) into that provider block, still with a backup and rollback. Rows
-with no resolvable endpoint stay read-only: the plugin never guesses an address.
+`baseURL` into that provider block, still with a backup and rollback. Rows with no resolvable
+endpoint stay read-only: the plugin never guesses an address.
+
+**0.13.1 stops writing `api`.** The `llm-pi-ai` settings schema accepts only `openai-completions`,
+`openai-responses` and `anthropic-messages`; names such as `google-generative-ai` exist inside the
+host catalog and are not valid there. 0.13.0 copied one into the config, the whole `llm-pi-ai`
+entry failed validation, and every provider card (and the "add provider" button) disappeared. Now:
+
+- a provider the host catalog can implement gets only a new `baseURL`; `api` stays absent, which is
+  what selects the catalog implementation;
+- `config.providerDefaults.<provider>.api` accepts just those three names, anything else is a 400
+  `unsupported_api`;
+- on boot the plugin removes an invalid `api` line when the host catalog knows that provider
+  (backup first, history entry `config-repair`) and leaves unknown providers untouched, so a schema
+  error is never traded for a runtime error.
 
 ## API
 
@@ -180,7 +193,7 @@ for the release checklist, and [docs/rollback.md](docs/rollback.md) for going ba
 ## Development
 
 ```bash
-npm test               # 116 tests / 22 suites (custom runner: node --test workers hit EPERM in the sandbox)
+npm test               # 119 tests / 22 suites (custom runner: node --test workers hit EPERM in the sandbox)
 npm run check          # node --check every module
 npm run check:package  # package gate: required/forbidden files, size
 npm run install-smoke  # pack -> clean consumer install -> boot the installed copy -> contract check

@@ -195,7 +195,13 @@ Invoke-RestMethod "http://127.0.0.1:8792/__health"
 4. 宿主内置目录 `pi-ai/dist/providers/data/<provider>.json`（桌面版直接读 `app.asar`，`dsh web`/CI 用同一个解析器）；
 5. 内置的公共端点表（deepseek、moonshot、google、openai、anthropic、xai、openrouter 等 17 项）。
 
-命中 3–5 的行带「端点来自…」徽章；点「应用」时插件把解析出的 `baseURL`（必要时连缺少的 `api`）写进该 provider 块，仍然只改这一处、仍然有备份与回滚。解析不到的行保持只读，不会猜地址。
+命中 3–5 的行带「端点来自…」徽章；点「应用」时插件把解析出的 `baseURL` 写进该 provider 块，仍然只改这一处、仍然有备份与回滚。解析不到的行保持只读，不会猜地址。
+
+**0.13.1 起不再写 `api`**：`llm-pi-ai` 的设置 schema 只接受 `openai-completions`、`openai-responses`、`anthropic-messages` 三个协议名，而宿主目录里的 `google-generative-ai` 一类名字只能在目录内部使用。0.13.0 把目录里的协议名写进了配置，整条 `llm-pi-ai` 因此校验失败、所有供应商卡片（连同「添加供应商」）一起消失。现在：
+
+- 宿主目录能实现的 provider 一律只改 `baseURL`，`api` 保持缺省（这才走宿主的 catalog 复用）；
+- `config.providerDefaults.<provider>.api` 只接受上面三个名字，其他值直接 400 `unsupported_api`；
+- 启动时自检：`api` 非法的 provider 若在宿主目录里能找到，就删掉这一行并备份（历史记 `config-repair`），找不到的保留原样只记日志——不会把 schema 错误换成运行时错误。
 
 ```yaml
 - id: egress-router
@@ -364,7 +370,7 @@ CI 矩阵与真机记录见 [docs/compatibility.md](docs/compatibility.md)；发
 ## 开发
 
 ```bash
-npm test               # 116 条测试 / 22 套件（自带 runner：node --test 在沙箱内 worker 会 EPERM）
+npm test               # 119 条测试 / 22 套件（自带 runner：node --test 在沙箱内 worker 会 EPERM）
 npm run check          # 所有模块 node --check
 npm run check:package  # 打包门禁：必备/禁入文件、体积
 npm run install-smoke  # 打包 → 干净 consumer 安装 → 启动已安装副本 → 校验契约
@@ -379,7 +385,7 @@ client/         设置页 bundle（无构建，纯 ESM + h()）
 patches/        声明式兼容补丁定义
 docs/           安装、兼容矩阵、回滚、发布清单
 preview/        离线渲染 harness 与明暗截图
-test/           22 个套件，116 条用例（含契约快照 test/contract/）
+test/           22 个套件，119 条用例（含契约快照 test/contract/）
 scripts/        发布门禁与安装冒烟
 ```
 
@@ -417,7 +423,8 @@ scripts/        发布门禁与安装冒烟
 | 0.10.0 | 「仅中转」路由（`relay:`，不改目标配置）、路由 CRUD（`?op=routes`）、批量应用/撤销（`?op=batch`，预检 + 逆序补偿）、修掉安静刷新自递归与错误码丢失 |
 | 0.11.0 | 可配置面：`config.guarded` 追加受保护域名、`config.origins` 声明真实端点、`config.discovery` 声明式规则与忽略、机器人映射移出 state（`bots.json`，state v10） |
 | 0.12.0 | 发布准备：写操作进程内串行、中转空闲超时与客户端断开释放、门禁统一 npm 解析、CRLF/含空格与中文路径/IPv6/并发用例、删除死 API |
-| 0.13.0 | 端点解析：第三方供应商未写 `baseURL` 时按「配置 → 记录 → `config.providerDefaults` → 宿主 pi-ai 目录 → 内置表」解析，应用时补齐 `baseURL`/`api`，行上标注来源 |
+| 0.13.0 | 端点解析：第三方供应商未写 `baseURL` 时按「配置 → 记录 → `config.providerDefaults` → 宿主 pi-ai 目录 → 内置表」解析，行上标注来源 |
+| 0.13.1 | 修复 0.13.0 的回归：不再把宿主目录里的协议名写进 `api`（会让整条 llm-pi-ai 失效），`providerDefaults.api` 只接受三种协议，启动时自检并删掉非法 `api` |
 
 完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 

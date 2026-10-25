@@ -118,6 +118,7 @@ __loader.load({
     endpointBuiltin: '端点来自内置默认',
     endpointDefaults: '端点来自配置默认',
     endpointWriteHint: '该供应商只在配置里写了模型和密钥；应用时会把解析出的 baseURL 写进去。',
+    reuseCatalogHint: '宿主内置实现负责这个供应商：应用时只改 baseURL，不写 api（写了会让整个供应商列表失效）。',
       guardedTag: '不建议改',
       running: '运行中 :{port}',
       down: '失败 :{port}',
@@ -274,6 +275,7 @@ __loader.load({
     endpointBuiltin: 'endpoint from the built-in table',
     endpointDefaults: 'endpoint from config defaults',
     endpointWriteHint: 'This provider lists only models and a key; Apply writes the resolved baseURL into the config.',
+    reuseCatalogHint: 'The host catalog implements this provider: Apply rewrites only baseURL, never api (writing api disables the whole provider list).',
       guardedTag: 'do not rewrite',
       running: 'running :{port}',
       down: 'down :{port}',
@@ -1340,8 +1342,10 @@ __loader.load({
                 (item.target || '—') + (item.baseURL && item.baseURL !== item.target ? '  ' + item.baseURL : '')),
               item.stale ? h('div', { style: hint }, t('staleHint')) : null,
               item.endpointSource === 'catalog' || item.endpointSource === 'builtin' || item.endpointSource === 'providerDefaults'
-                ? h('div', { style: hint }, t('endpointWriteHint'))
-                : null,
+                ? h('div', { style: hint }, item.reuseCatalog ? t('reuseCatalogHint') : t('endpointWriteHint'))
+                : item.reuseCatalog
+                  ? h('div', { style: hint }, t('reuseCatalogHint'))
+                  : null,
               metricsLine(item),
               h('div', { style: actions },
                 isPatchable(item) && item.target ? h('input', {
